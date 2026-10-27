@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Derleme çıktıları
+build/
+DerivedData/
+.build/
+*.dmg
+*.app
+*.o
+*.dSYM
+
+# Xcode kullanıcı verileri
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# Swift Package Manager (kullanılmıyor, ileride eklenebilir)
+.swiftpm/
+Package.resolved
+
+# Editör / araç geçici dosyaları
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+*~
