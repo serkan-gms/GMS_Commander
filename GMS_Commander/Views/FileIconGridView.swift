@@ -125,6 +125,12 @@ struct FileIconGridView: View {
             panel.select(item.url)
             viewModel.open(item)
         }
+        // "Diğer Pencerede Aç" yalnızca klasörler için sunulur.
+        if item.isDirectory {
+            Button(L.t("menu.file.openInOtherPanel")) {
+                viewModel.openInOtherPanel(item, from: panel.side)
+            }
+        }
         Button(L.t("menu.file.quickLook")) {
             viewModel.activate(side: panel.side)
             panel.select(item.url)
@@ -157,6 +163,17 @@ struct FileIconGridView: View {
             viewModel.cutSelection()
         }
         Button(L.t("menu.edit.paste")) { viewModel.paste() }
+        if item.url.pathExtension.lowercased() == "app" {
+            Button(L.t("favorites.addApplication")) {
+                viewModel.activate(side: panel.side)
+                if !viewModel.addApplicationToFavorites(item.url) {
+                    viewModel.alert = UserFacingAlert(
+                        title: L.t("favorites.add.title"),
+                        message: L.t("favorites.application.exists")
+                    )
+                }
+            }
+        }
         Button(L.t("menu.edit.rename")) {
             viewModel.activate(side: panel.side)
             panel.select(item.url)

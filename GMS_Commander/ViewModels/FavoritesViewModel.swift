@@ -100,7 +100,13 @@ final class FavoritesViewModel: ObservableObject {
                   let definition = FavoriteGroup.defaultDefinitions.first(where: {
                       L.t($0.nameKey).localizedCaseInsensitiveCompare(group.name) == .orderedSame
                   }) else { return group }
-            return FavoriteGroup(id: group.id, name: group.name, colorHex: group.colorHex, role: definition.role)
+            return FavoriteGroup(
+                id: group.id,
+                name: group.name,
+                colorHex: group.colorHex,
+                role: definition.role,
+                kind: definition.role.defaultKind
+            )
         }
     }
 
@@ -137,8 +143,40 @@ final class FavoritesViewModel: ObservableObject {
     }
 
     func suggestedGroupID(for url: URL) -> UUID? {
-        let role: FavoriteGroupRole = url.pathExtension.lowercased() == "app" ? .applications : .quickAccess
-        return groupID(for: role)
+        switch kind(of: url) {
+        case .disk: return groupID(for: .disks)
+        case .file: return groupID(for: .applications) ?? groupID(for: .quickAccess)
+        case .folder: return groupID(for: .quickAccess)
+        }
+    }
+
+    // MARK: - Kayıt türü
+
+    /// Adresin hızlı erişim türünü belirler.
+    ///
+    /// Uygulama paketleri (`.app`) klasör gibi görünse de dosya sayılır;
+    /// böylece "Uygulamalar" gibi dosya bölümlerine eklenebilirler.
+    func kind(of url: URL) -> FavoriteGroupKind {
+        let values = try? url.resourceValues(forKeys: [.isVolumeKey, .isPackageKey, .isDirectoryKey])
+        if values?.isVolume == true { return .disk }
+        guard FileManager.default.fileExists(atPath: url.path) else { return .file }
+        if values?.isDirectory == true, values?.isPackage != true { return .folder }
+        return .file
+    }
+
+    /// Bölümün kabul ettiği türü döndürür; `groupID` yoksa ilk bölüm.
+    func targetGroup(for groupID: UUID?) -> FavoriteGroup? {
+        if let groupID, let group = groups.first(where: { $0.id == groupID }) {
+            return group
+        }
+        return groups.first
+    }
+
+    /// Adres bölüme eklenebilir mi?
+    func canAdd(url: URL, to groupID: UUID?) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let group = targetGroup(for: groupID) else { return false }
+        return group.kind == kind(of: url)
     }
 
     // MARK: - Sorgular
@@ -155,10 +193,15 @@ final class FavoritesViewModel: ObservableObject {
     // MARK: - Değiştirme
 
     /// Dosya veya klasörü hızlı erişime ekler.
+    ///
+    /// Bölümün kayıt türü ile adresin türü uyuşmazsa ekleme yapılmaz
+    /// (ör. klasör bölümüne dosya, dosya bölümüne klasör).
     @discardableResult
     func add(url: URL, to groupID: UUID? = nil) -> Bool {
-        guard FileManager.default.fileExists(atPath: url.path) else { return false }
-        let targetGroup = groups.contains(where: { $0.id == groupID }) ? groupID : groups.first?.id
+        guard FileManager.default.fileExists(atPath: url.path),
+              let group = targetGroup(for: groupID),
+              group.kind == kind(of: url) else { return false }
+        let targetGroup = group.id
         let targetPath = FavoriteFolder.normalizedPath(url.path).lowercased()
         if let existingIndex = items.firstIndex(where: { $0.path.lowercased() == targetPath }) {
             guard items[existingIndex].groupID != targetGroup else { return false }
@@ -208,20 +251,28 @@ final class FavoritesViewModel: ObservableObject {
     }
 
     /// Yeni bir özel bölüm oluşturur.
+    /// - Parameters:
+    ///   - name: Bölüm adı.
+    ///   - colorHex: Bölüm rengi.
+    ///   - kind: Bölümün kabul edeceği kayıt türü.
     @discardableResult
-    func addGroup(name: String, colorHex: UInt32 = 0x4F9CF9) -> FavoriteGroup? {
+    func addGroup(
+        name: String,
+        colorHex: UInt32 = 0x4F9CF9,
+        kind: FavoriteGroupKind = .folder
+    ) -> FavoriteGroup? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               !groups.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
             return nil
         }
-        let group = FavoriteGroup(name: trimmed, colorHex: colorHex)
+        let group = FavoriteGroup(name: trimmed, colorHex: colorHex, kind: kind)
         groups.append(group)
         save()
         return group
     }
 
-    /// Bölüm adını ve rengini günceller.
+    /// Bölüm adını, rengini ve kayıt türünü günceller.
     func updateGroup(_ group: FavoriteGroup) {
         let trimmed = group.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -230,7 +281,8 @@ final class FavoritesViewModel: ObservableObject {
             id: group.id,
             name: trimmed,
             colorHex: group.colorHex,
-            role: groups[index].role
+            role: groups[index].role,
+            kind: group.kind
         )
         save()
     }
@@ -249,9 +301,12 @@ final class FavoritesViewModel: ObservableObject {
     }
 
     /// Kaydı başka bölüme taşır.
+    ///
+    /// Hedef bölümün kayıt türü öğeyle uyuşmuyorsa taşıma yapılmaz.
     func move(id: UUID, to groupID: UUID) {
-        guard groups.contains(where: { $0.id == groupID }),
-              let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard let group = groups.first(where: { $0.id == groupID }),
+              let index = items.firstIndex(where: { $0.id == id }),
+              group.kind == kind(of: items[index].url) else { return }
         items[index].groupID = groupID
         save()
     }

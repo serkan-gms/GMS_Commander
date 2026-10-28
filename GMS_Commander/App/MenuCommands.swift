@@ -100,7 +100,6 @@ struct CommanderCommands: Commands {
             Button(L.t("menu.edit.copyPath")) {
                 viewModel.copyPathSelection()
             }
-            .keyboardShortcut("c", modifiers: [.command, .option])
 
             Button(L.t("menu.edit.editPath")) {
                 viewModel.beginPathEditing()
@@ -112,7 +111,6 @@ struct CommanderCommands: Commands {
             Button(L.t("menu.edit.rename")) {
                 viewModel.beginRename()
             }
-            .keyboardShortcut("R", modifiers: [.command, .shift])
 
             Button(L.t("menu.edit.batchRename")) {
                 viewModel.beginBatchRename()
@@ -152,7 +150,6 @@ struct CommanderCommands: Commands {
             Button(L.t("menu.view.refresh")) {
                 viewModel.refreshActivePanel()
             }
-            .keyboardShortcut("r", modifiers: .command)
 
             Button(L.t("menu.view.goUp")) {
                 viewModel.goUp()
@@ -287,7 +284,6 @@ struct CommanderCommands: Commands {
             Button(L.t("menu.tools.properties")) {
                 viewModel.showProperties()
             }
-            .keyboardShortcut("i", modifiers: .command)
 
             Button(L.t("menu.tools.openArchive")) {
                 viewModel.openSelectedArchive()
@@ -319,7 +315,6 @@ struct CommanderCommands: Commands {
             Button(L.t("menu.tools.openTerminal")) {
                 viewModel.openTerminal()
             }
-            .keyboardShortcut("`", modifiers: [.control])
 
             Divider()
 

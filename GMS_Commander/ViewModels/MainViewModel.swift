@@ -59,6 +59,30 @@ struct QueuedTransfer {
     let destinationDirectory: URL
 }
 
+/// Kullanıcı onayını bekleyen kopyalama/taşıma isteği.
+struct TransferConfirmationRequest: Identifiable {
+    let id = UUID()
+    let mode: TransferMode
+    let sources: [URL]
+    let destinationDirectory: URL
+
+    var title: String {
+        L.t(mode == .copy ? "transfer.confirm.copy.title" : "transfer.confirm.move.title")
+    }
+
+    var message: String {
+        L.t(
+            "transfer.confirm.message",
+            sources.count,
+            destinationDirectory.path
+        )
+    }
+
+    var action: String {
+        L.t(mode == .copy ? "transfer.confirm.copy.action" : "transfer.confirm.move.action")
+    }
+}
+
 /// Kalıcı silme onayı isteği.
 struct DeletionRequest: Identifiable {
     let id = UUID()
@@ -185,6 +209,9 @@ final class MainViewModel: ObservableObject {
     /// Kalıcı silme onayı.
     @Published var deletionRequest: DeletionRequest?
 
+    /// Kopyalama/taşıma için hedef klasör onayı.
+    @Published var transferConfirmation: TransferConfirmationRequest?
+
     /// Yeniden adlandırma isteği.
     @Published var renameRequest: RenameRequest?
 
@@ -237,7 +264,7 @@ final class MainViewModel: ObservableObject {
         isShowingSettings || isShowingHelp || isShowingAdvancedSearch
             || isShowingFolderCompare || isShowingPatternSelection || hashRequest != nil
             || renameRequest != nil || propertiesItem != nil || pendingConflict != nil
-            || deletionRequest != nil || alert != nil
+            || deletionRequest != nil || transferConfirmation != nil || alert != nil
             || archiveBrowser != nil || isShowingTrashRestore
             || batchRenameRequest != nil
             || viewerFile != nil || editorFile != nil
@@ -405,6 +432,13 @@ final class MainViewModel: ObservableObject {
         Task { await panel(for: side).reload(preserveSelection: true) }
     }
 
+    /// Belirli bir panel sütununun genişliğini ayarlar ve kalıcılaştırır.
+    func setColumnWidth(_ width: Double, column: PanelColumn, for side: PanelSide) {
+        var widths = settings.columnWidths(for: side)
+        widths[column.rawValue] = width
+        settings.setColumnWidths(widths, for: side)
+    }
+
     /// İki paneli de yeniler.
     func refreshAll() {
         favorites.refreshMountedVolumes()
@@ -569,6 +603,31 @@ final class MainViewModel: ObservableObject {
     /// Etkin panelde ileri gider.
     func goForward() { activePanel.goForward() }
 
+    // MARK: - Paneller arası yol aktarımı
+
+    /// Bir panelin açık klasör yolunu karşı panele aktarır.
+    ///
+    /// Aktiflik değişmez: komut, yolu gönderen panelin etkin kalmasını sağlar.
+    /// - Parameter side: Yolu gönderen panel.
+    func transferPath(from side: PanelSide) {
+        let target = side.opposite
+        panel(for: target).navigate(to: panel(for: side).currentDirectory)
+    }
+
+    /// Seçilen klasörü karşı panelde açar ve o paneli etkinleştirir.
+    /// - Parameters:
+    ///   - item: Açılacak öğe; yalnızca klasörler kabul edilir.
+    ///   - side: Öğenin seçildiği panel.
+    /// - Returns: Klasör açıldıysa `true`.
+    @discardableResult
+    func openInOtherPanel(_ item: FileItem, from side: PanelSide) -> Bool {
+        guard item.isDirectory else { return false }
+        let target = side.opposite
+        activate(side: target)
+        panel(for: target).navigate(to: item.url)
+        return true
+    }
+
     /// Etkin panelde ev klasörüne gider.
     func goHome() { activePanel.goHome() }
 
@@ -670,6 +729,13 @@ final class MainViewModel: ObservableObject {
         selectedURLs.reduce(into: 0) { count, url in
             if favorites.add(url: url, to: groupID ?? favorites.suggestedGroupID(for: url)) { count += 1 }
         }
+    }
+
+    /// Bir `.app` paketini doğrudan Uygulamalar favori bölümüne ekler.
+    @discardableResult
+    func addApplicationToFavorites(_ url: URL) -> Bool {
+        guard url.pathExtension.lowercased() == "app" else { return false }
+        return favorites.add(url: url, to: favorites.suggestedGroupID(for: url))
     }
 
     /// Etkin panelin klasörünü hızlı erişime ekler.
@@ -934,21 +1000,21 @@ final class MainViewModel: ObservableObject {
 
     // MARK: - Aktarım (kopyala/taşı)
 
-    /// Etkin paneldeki seçili öğeleri diğer panele kopyalar.
+    /// Etkin paneldeki seçili öğeleri diğer panele kopyalamak için onay ister.
     func copyToOtherPanel() {
         let urls = selectedURLs
         guard !urls.isEmpty else { return }
         startTransfer(mode: .copy, sources: urls)
     }
 
-    /// Etkin paneldeki seçili öğeleri diğer panele taşır.
+    /// Etkin paneldeki seçili öğeleri diğer panele taşımak için onay ister.
     func moveToOtherPanel() {
         let urls = selectedURLs
         guard !urls.isEmpty else { return }
         startTransfer(mode: .move, sources: urls)
     }
 
-    /// Etkin paneldeki seçili öğeleri diğer panele aktarır.
+    /// Etkin paneldeki seçili öğeleri diğer panele aktarmak için onay ister.
     /// - Parameters:
     ///   - mode: Kopyala veya taşı.
     ///   - sources: Kaynak dosya ve klasörler.
@@ -956,19 +1022,28 @@ final class MainViewModel: ObservableObject {
         transfer(mode: mode, sources: sources, to: inactivePanel.currentDirectory)
     }
 
-    /// Aktarım işlemini belirtilen hedef klasöre başlatır.
-    /// Başka bir işlem sürüyorsa istek kuyruğa alınır.
+    /// Belirtilen klasöre aktarım için kullanıcı onayı ister.
     /// - Parameters:
     ///   - mode: Kopyala veya taşı.
     ///   - sources: Kaynak dosya ve klasörler.
     ///   - destinationDirectory: Hedef klasör.
     func transfer(mode: TransferMode, sources: [URL], to destinationDirectory: URL) {
         guard !sources.isEmpty else { return }
-
-        let queued = QueuedTransfer(
+        transferConfirmation = TransferConfirmationRequest(
             mode: mode,
             sources: sources,
             destinationDirectory: destinationDirectory
+        )
+    }
+
+    /// Kullanıcının onayladığı aktarımı kuyruğa ekler veya başlatır.
+    func confirmTransfer() {
+        guard let request = transferConfirmation else { return }
+        transferConfirmation = nil
+        let queued = QueuedTransfer(
+            mode: request.mode,
+            sources: request.sources,
+            destinationDirectory: request.destinationDirectory
         )
 
         if isOperating {
@@ -1295,9 +1370,7 @@ final class MainViewModel: ObservableObject {
 
     /// Etkin paneldeki seçili öğeleri Çöp Kutusu'na taşır.
     func trashSelection() {
-        let urls = selectedURLs
-        guard !urls.isEmpty else { return }
-        performDeletion(urls: urls, permanently: false)
+        requestTrashConfirmation()
     }
 
     /// Etkin paneldeki seçili öğeler için kalıcı silme onayı ister.

@@ -69,6 +69,7 @@ final class FilePanelViewModelTests: XCTestCase {
         panel.goUp()
         await waitForLoad(panel)
         XCTAssertEqual(panel.currentDirectory.standardizedFileURL, directory.standardizedFileURL)
+        XCTAssertEqual(panel.focusedItem?.name, "Alt", "Çıkılan alt klasör üst dizinde seçili kalmalı")
     }
 
     func testSortTogglesDirection() async throws {

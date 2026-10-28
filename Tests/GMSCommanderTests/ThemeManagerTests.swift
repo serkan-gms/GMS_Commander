@@ -23,18 +23,22 @@ final class ThemeManagerTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
         ThemeManager.shared.themeID = .voidCommander
         ThemeManager.shared.resetFontSize()
+        ThemeManager.shared.resetFontStyle()
     }
 
     func testThemeAndFontSizePersistAcrossInstances() {
         let theme = ThemeManager(defaults: defaults)
         theme.themeID = .graphite
         theme.fontSize = 16
+        theme.fontStyle = .classicDOS
 
         let reloaded = ThemeManager(defaults: defaults)
         XCTAssertEqual(reloaded.themeID, .graphite)
         XCTAssertEqual(reloaded.fontSize, 16)
+        XCTAssertEqual(reloaded.fontStyle, .classicDOS)
         XCTAssertEqual(reloaded.signature.themeID, .graphite)
         XCTAssertEqual(reloaded.signature.fontSize, 16)
+        XCTAssertEqual(reloaded.signature.fontStyle, .classicDOS)
     }
 
     func testFontSizeIsClampedToSupportedRange() {

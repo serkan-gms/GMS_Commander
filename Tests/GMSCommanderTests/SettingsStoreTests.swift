@@ -70,4 +70,27 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(PanelSide.left.opposite, .right)
         XCTAssertEqual(PanelSide.right.opposite, .left)
     }
+
+    func testAdditionalShortcutsPersistAndRejectConflicts() {
+        let store = SettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.additionalKeyBindings.key(for: .rename), .commandShiftR)
+        XCTAssertNil(store.setAdditionalShortcut(.commandShiftP, for: .rename))
+        XCTAssertEqual(store.additionalKeyBindings.key(for: .rename), .commandShiftP)
+        XCTAssertEqual(store.setAdditionalShortcut(.commandShiftP, for: .properties), .rename)
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertEqual(reloaded.additionalKeyBindings.key(for: .rename), .commandShiftP)
+    }
+
+    func testColumnVisibilityAndWidthsAreStoredPerPanel() {
+        let store = SettingsStore(defaults: defaults)
+        store.setVisibleColumns([.name, .fileExtension, .size], for: .left)
+        store.setColumnWidths([PanelColumn.fileExtension.rawValue: 110], for: .left)
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertEqual(reloaded.visibleColumns(for: .left), [.name, .fileExtension, .size])
+        XCTAssertEqual(reloaded.columnWidths(for: .left)[PanelColumn.fileExtension.rawValue], 110)
+        XCTAssertNil(reloaded.columnWidths(for: .right)[PanelColumn.fileExtension.rawValue])
+    }
 }

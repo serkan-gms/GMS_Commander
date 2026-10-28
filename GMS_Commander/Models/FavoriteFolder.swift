@@ -108,12 +108,33 @@ struct FavoriteGroup: Codable, Identifiable, Hashable {
     var name: String
     var colorHex: UInt32
     var role: FavoriteGroupRole?
+    /// Bölümün kabul ettiği kayıt türü (klasör, dosya veya disk).
+    var kind: FavoriteGroupKind
 
-    init(id: UUID = UUID(), name: String, colorHex: UInt32, role: FavoriteGroupRole? = nil) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        colorHex: UInt32,
+        role: FavoriteGroupRole? = nil,
+        kind: FavoriteGroupKind? = nil
+    ) {
         self.id = id
         self.name = name
         self.colorHex = colorHex
         self.role = role
+        self.kind = kind ?? role?.defaultKind ?? .folder
+    }
+
+    /// Eski kayıtlarda `kind` alanı yoktur; bölüm rolünden türetilir.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        colorHex = try container.decode(UInt32.self, forKey: .colorHex)
+        role = try container.decodeIfPresent(FavoriteGroupRole.self, forKey: .role)
+        kind = try container.decodeIfPresent(FavoriteGroupKind.self, forKey: .kind)
+            ?? role?.defaultKind
+            ?? .folder
     }
 
     static let defaultDefinitions: [(nameKey: String, colorHex: UInt32, role: FavoriteGroupRole)] = [
@@ -129,4 +150,35 @@ enum FavoriteGroupRole: String, Codable, Sendable {
     case applications
     case projects
     case disks
+
+    /// Bölümün varsayılan kayıt türü.
+    var defaultKind: FavoriteGroupKind {
+        switch self {
+        case .quickAccess, .projects: return .folder
+        case .applications: return .file
+        case .disks: return .disk
+        }
+    }
+}
+
+/// Hızlı erişim bölümlerinin kabul ettiği kayıt türü.
+enum FavoriteGroupKind: String, Codable, CaseIterable, Sendable {
+    /// Yalnızca klasörler.
+    case folder
+    /// Dosyalar (uygulama paketleri dâhil).
+    case file
+    /// Bağlı disk birimleri; bölüm kendiliğinden doldurulur.
+    case disk
+
+    /// Kullanıcıya gösterilen ad.
+    var localizedTitle: String {
+        switch self {
+        case .folder: return L.t("favorites.kind.folder")
+        case .file: return L.t("favorites.kind.file")
+        case .disk: return L.t("favorites.kind.disk")
+        }
+    }
+
+    /// Yeni bölüm oluştururken sunulan türler.
+    static var selectableCases: [FavoriteGroupKind] { [.folder, .file] }
 }

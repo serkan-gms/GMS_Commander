@@ -42,7 +42,9 @@ final class SettingsStore: ObservableObject {
         static let verticalSplit = "settings.verticalSplit"
         static let restoreTabs = "settings.restoreTabs"
         static let showPreviewPane = "settings.showPreviewPane"
+        static let mouseBackButton = "settings.mouseBackButton"
         static let functionKeyBindings = "settings.functionKeyBindings"
+        static let additionalShortcutBindings = "settings.additionalShortcutBindings"
     }
 
     private let defaults: UserDefaults
@@ -117,8 +119,16 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(showPreviewPane, forKey: Keys.showPreviewPane) }
     }
 
+    /// Fare üzerindeki sayfa geri tuşu bir üst klasöre döndürsün mü?
+    @Published var mouseBackButtonEnabled: Bool {
+        didSet { defaults.set(mouseBackButtonEnabled, forKey: Keys.mouseBackButton) }
+    }
+
     /// Kullanıcının işlev tuşu atamaları (eylem → tuş).
     @Published private(set) var functionKeyBindings: [String: String]
+
+    /// Kullanıcının değiştirilebilir ek macOS kısayolları.
+    @Published private(set) var additionalShortcutBindings: [String: String]
 
     /// Başlangıçta sol panelde açılacak klasör.
     @Published var leftPanelPath: String {
@@ -147,10 +157,15 @@ final class SettingsStore: ObservableObject {
         self.verticalSplit = defaults.object(forKey: Keys.verticalSplit) as? Bool ?? false
         self.restoreTabsOnLaunch = defaults.object(forKey: Keys.restoreTabs) as? Bool ?? true
         self.showPreviewPane = defaults.object(forKey: Keys.showPreviewPane) as? Bool ?? false
+        self.mouseBackButtonEnabled = defaults.object(forKey: Keys.mouseBackButton) as? Bool ?? true
 
         let storedBindings = defaults.dictionary(forKey: Keys.functionKeyBindings) as? [String: String] ?? [:]
         self.functionKeyBindings = KeyboardShortcutManager.FunctionKeyBindings(
             dictionary: storedBindings
+        ).dictionary
+        let storedAdditional = defaults.dictionary(forKey: Keys.additionalShortcutBindings) as? [String: String] ?? [:]
+        self.additionalShortcutBindings = KeyboardShortcutManager.AdditionalShortcutBindings(
+            dictionary: storedAdditional
         ).dictionary
 
         let policyRaw = defaults.string(forKey: Keys.conflictPolicy) ?? ""
@@ -208,6 +223,35 @@ final class SettingsStore: ObservableObject {
         let defaultsDictionary = KeyboardShortcutManager.FunctionKeyBindings.default.dictionary
         functionKeyBindings = defaultsDictionary
         defaults.set(defaultsDictionary, forKey: Keys.functionKeyBindings)
+    }
+
+    /// Çözümlenmiş, değiştirilebilir ek kısayollar.
+    var additionalKeyBindings: KeyboardShortcutManager.AdditionalShortcutBindings {
+        KeyboardShortcutManager.AdditionalShortcutBindings(dictionary: additionalShortcutBindings)
+    }
+
+    /// Ek bir eyleme kısayol atar; başka eylem kullanıyorsa çakışanı döndürür.
+    @discardableResult
+    func setAdditionalShortcut(
+        _ key: KeyboardShortcutManager.AdditionalShortcutKey,
+        for action: KeyboardShortcutManager.AdditionalShortcutAction
+    ) -> KeyboardShortcutManager.AdditionalShortcutAction? {
+        let bindings = additionalKeyBindings
+        if let existing = bindings.action(for: key), existing != action {
+            return existing
+        }
+        var updated = additionalShortcutBindings
+        updated[action.rawValue] = key.rawValue
+        additionalShortcutBindings = updated
+        defaults.set(updated, forKey: Keys.additionalShortcutBindings)
+        return nil
+    }
+
+    /// Değiştirilebilir ek kısayolları varsayılanlarına döndürür.
+    func resetAdditionalShortcutBindings() {
+        let values = KeyboardShortcutManager.AdditionalShortcutBindings.default.dictionary
+        additionalShortcutBindings = values
+        defaults.set(values, forKey: Keys.additionalShortcutBindings)
     }
 
     /// Panel için saklanmış sıralama anahtarı.
@@ -277,6 +321,7 @@ final class SettingsStore: ObservableObject {
     /// Sütun genişliklerini kaydeder.
     func setColumnWidths(_ widths: [String: Double], for panel: PanelSide) {
         defaults.set(widths.mapValues { NSNumber(value: $0) }, forKey: widthsDefaultsKey(for: panel))
+        objectWillChange.send()
     }
 
     // MARK: - Görünüm modu

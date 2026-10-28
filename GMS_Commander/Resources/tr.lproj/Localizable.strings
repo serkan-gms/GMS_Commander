@@ -20,6 +20,10 @@
 "viewMode.icons" = "Simge Görünümü";
 "viewMode.menuHelp" = "Görünüm modu";
 "columns.menuHelp" = "Görünür sütunlar";
+"columns.width.title" = "%@ Sütunu Genişliği";
+"columns.width.narrow" = "Dar";
+"columns.width.normal" = "Normal";
+"columns.width.wide" = "Geniş";
 "tab.new" = "Yeni sekme";
 "tab.close" = "Sekmeyi kapat";
 "tab.closeOthers" = "Diğer sekmeleri kapat";
@@ -59,6 +63,11 @@
 "trash.confirm.title" = "Çöp Kutusuna Taşı";
 "trash.confirm.action" = "Çöp Kutusuna Taşı";
 "trash.confirm.message" = "%d öğe Çöp Kutusu'na taşınacak. Devam edilsin mi?";
+"transfer.confirm.copy.title" = "Diğer Panele Kopyala";
+"transfer.confirm.move.title" = "Diğer Panele Taşı";
+"transfer.confirm.copy.action" = "Kopyala";
+"transfer.confirm.move.action" = "Taşı";
+"transfer.confirm.message" = "%d öğe şu klasöre aktarılacak:\n%@\nDevam edilsin mi?";
 "trash.title" = "Çöp Kutusu";
 "trash.destination" = "Geri yükleme hedefi: %@";
 "trash.itemCount" = "%d öğe";
@@ -167,6 +176,7 @@
 "menu.file.hideHidden" = "Gizli Dosyaları Gizle";
 "menu.file.newFolder" = "Yeni Klasör";
 "menu.file.open" = "Aç";
+"menu.file.openInOtherPanel" = "Diğer Pencerede Aç";
 "menu.file.openWith" = "Birlikte Aç…";
 "menu.file.quickLook" = "Hızlı Önizleme";
 "menu.file.reveal" = "Finder'da Göster";
@@ -226,6 +236,7 @@
 "panel.emptyFolder" = "Bu klasör boş";
 "panel.left" = "Sol panel";
 "panel.right" = "Sağ panel";
+"panel.transferPath" = "Klasör yolunu diğer panele aktar";
 "paste.empty.message" = "Panoda yapıştırılabilecek dosya bulunamadı.";
 "paste.empty.title" = "Yapıştırılacak Öğe Yok";
 
@@ -243,6 +254,7 @@
 "properties.name" = "Ad";
 "properties.owner" = "Sahip";
 "properties.path" = "Yol";
+"properties.copyPath" = "Dosya Yolunu Kopyala";
 "properties.permissions" = "İzinler";
 "properties.readable" = "Okunabilir";
 "properties.size" = "Boyut";
@@ -265,6 +277,7 @@
 "search.placeholder" = "Ara";
 
 /* MARK: - Ayarlar */
+"settings.about.author" = "Programı Hazırlayan: %@";
 "settings.about.description" = "GMS Commander, iki paneli aynı pencerede sunan yerel bir macOS dosya yöneticisidir. SwiftUI ve AppKit ile geliştirilmiştir.";
 "settings.choose" = "Seç…";
 "settings.chooseMessage" = "Başlangıç klasörünü seçin.";
@@ -281,6 +294,10 @@
 "settings.section.display" = "Görünüm";
 "settings.section.refresh" = "Yenileme ve Git";
 "settings.section.startup" = "Başlangıç Klasörleri";
+"settings.section.mouse" = "Fare";
+"settings.mouseBackButton" = "Sayfa geri tuşu bir üst klasöre döner";
+"settings.mouseBackButton.help" = "Farenin yan geri tuşuna basıldığında imlecin altındaki panelin üst klasörü açılır. Kapalıyken bu tuş yok sayılır.";
+"settings.mouseBackButton.detected" = "Son algılanan girdi: %@ (tanılama)";
 "settings.section.transfer" = "Aktarım";
 "settings.showHiddenFiles" = "Gizli dosyaları göster";
 "settings.showRelativePath" = "Arama sonuçlarında göreli yolu göster";
@@ -359,6 +376,9 @@
 "theme.daylight.summary" = "Yüksek okunabilirlik için açık gri zemin ve koyu metin.";
 "theme.fontSize" = "Yazı boyutu";
 "theme.fontSize.sample" = "Örnek: Belge.txt — 12 KB — 14.03.2024 09:41";
+"theme.fontStyle" = "Yazı tipi görünümü";
+"theme.fontStyle.modern" = "Güncel macOS sabit genişlikli";
+"theme.fontStyle.classicDOS" = "Klasik DOS / Windows Terminal";
 "theme.graphite" = "Grafit";
 "theme.graphite.summary" = "Nötr gri tonlar, düşük kontrastlı sakin bir arayüz.";"theme.nortonCommander" = "Norton Commander";
 "theme.nortonCommander.summary" = "Klasik mavi paneller, sarı vurgular ve kalın çerçeveler.";
@@ -374,7 +394,10 @@
 /* MARK: - Sık kullanılanlar */
 "favorites.add" = "Etkin klasörü sık kullanılanlara ekle";
 "favorites.addSelection" = "Seçili öğeleri Hızlı Erişim'e ekle";
+"favorites.addApplication" = "Uygulamalar'a Ekle";
+"favorites.application.exists" = "Bu uygulama zaten Uygulamalar bölümünde.";
 "favorites.add.exists" = "Bu öğe zaten hızlı erişimde.";
+"favorites.add.kindMismatch" = "“%1$@” bölümüne yalnızca %2$@ eklenebilir.";
 "favorites.add.title" = "Hızlı Erişim Eklenemedi";
 "favorites.addCurrent" = "Geçerli klasörü ekle";
 "favorites.addSelected" = "Seçili öğeleri ekle (%d)";
@@ -394,6 +417,10 @@
 "favorites.group.projects" = "Projeler";
 "favorites.group.quickAccess" = "Hızlı Erişim";
 "favorites.hint" = "%d öğe";
+"favorites.kind" = "Kayıt tipi";
+"favorites.kind.disk" = "Disk";
+"favorites.kind.file" = "Dosya";
+"favorites.kind.folder" = "Klasör";
 "favorites.groupName" = "Bölüm adı";
 "favorites.folder.desktop" = "Masaüstü";
 "favorites.folder.documents" = "Belgeler";
@@ -415,6 +442,7 @@
 "favorites.rename" = "Hızlı erişim adını değiştir";
 "favorites.renameTitle" = "Hızlı Erişim Adını Değiştir";
 "favorites.remove" = "Sık Kullanılanlardan Çıkar";
+"favorites.removeApplication" = "Uygulamalar'dan Çıkar";
 "favorites.title" = "SIK KULLANILANLAR";
 
 /* MARK: - Görünüm menüsü */
@@ -643,3 +671,11 @@
 "settings.keyboard.help" = "İşlev tuşlarını F1–F12 arasında değiştirin. Aynı tuş iki eyleme atanamaz.";
 "settings.keyboard.conflict" = "%@ tuşu zaten \"%@\" eylemine atanmış.";
 "settings.keyboard.reset" = "Varsayılan Tuşlara Dön";
+"settings.section.additionalShortcuts" = "Değiştirilebilir macOS Kısayolları";
+"settings.additionalShortcuts.help" = "⌘C, ⌘X, ⌘V ve ⌘A gibi evrensel kısayollar sabittir. Aşağıdaki ek eylemleri değiştirebilir veya Yok seçeneğiyle kaldırabilirsiniz.";
+"shortcut.none" = "Yok";
+"shortcut.action.rename" = "Yeniden Adlandır";
+"shortcut.action.copyPath" = "Dosya Yolunu Kopyala";
+"shortcut.action.properties" = "Özellikler";
+"shortcut.action.terminal" = "Terminal'de Aç";
+"shortcut.action.refresh" = "Yenile";

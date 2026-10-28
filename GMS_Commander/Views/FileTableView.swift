@@ -14,6 +14,51 @@
 import SwiftUI
 import AppKit
 
+/// Her panelin dosya tablosunu zayıf referansla tutar. `Tab` yerel olay
+/// izleyicisinde yakalandığı için SwiftUI görünüm güncellemesini beklemeden yeni
+/// paneli ilk yanıtlayıcı yapmamız gerekir; aksi halde hemen ardından basılan ok
+/// tuşu eski panelde çalışır.
+@MainActor
+enum FileTableFocusController {
+    private final class WeakTable {
+        weak var value: FileListNSTableView?
+
+        init(_ value: FileListNSTableView) {
+            self.value = value
+        }
+    }
+
+    private static var tables: [ObjectIdentifier: [PanelSide: WeakTable]] = [:]
+
+    static func register(_ tableView: FileListNSTableView, for viewModel: MainViewModel, side: PanelSide) {
+        let owner = ObjectIdentifier(viewModel)
+        var panels = tables[owner] ?? [:]
+        panels[side] = WeakTable(tableView)
+        tables[owner] = panels
+    }
+
+    static func unregister(_ tableView: FileListNSTableView, for viewModel: MainViewModel, side: PanelSide) {
+        let owner = ObjectIdentifier(viewModel)
+        guard var panels = tables[owner], panels[side]?.value === tableView else { return }
+        panels.removeValue(forKey: side)
+        if panels.isEmpty {
+            tables.removeValue(forKey: owner)
+        } else {
+            tables[owner] = panels
+        }
+    }
+
+    /// İstenen paneli anında klavye odağına alır. Tablo henüz pencereye
+    /// bağlanmadıysa çağıran görünüm asenkron yedek odaklamayı kullanır.
+    @discardableResult
+    static func focus(viewModel: MainViewModel, side: PanelSide) -> Bool {
+        let owner = ObjectIdentifier(viewModel)
+        guard let tableView = tables[owner]?[side]?.value,
+              let window = tableView.window else { return false }
+        return window.makeFirstResponder(tableView)
+    }
+}
+
 /// Dosya tablosunun görünüm yapılandırması. Tema, sütunlar, genişlikler ve
 /// görünüm modu değiştiğinde tablo yeniden kurulur.
 struct FileTableConfiguration: Equatable {
@@ -73,6 +118,7 @@ struct FileTableView: NSViewRepresentable {
         tableView.doubleAction = #selector(Coordinator.handleDoubleClick(_:))
         tableView.menu = context.coordinator.makeContextMenu()
         tableView.parentRowIndex = context.coordinator.parentRowIndex
+        FileTableFocusController.register(tableView, for: viewModel, side: side)
 
         context.coordinator.rebuildColumns(tableView: tableView)
 
@@ -88,16 +134,41 @@ struct FileTableView: NSViewRepresentable {
         return scrollView
     }
 
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        guard let tableView = scrollView.documentView as? FileListNSTableView else { return }
+        FileTableFocusController.unregister(tableView, for: coordinator.viewModel, side: coordinator.side)
+    }
+
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.viewModel = viewModel
         coordinator.side = side
 
         guard let tableView = scrollView.documentView as? FileListNSTableView else { return }
+        FileTableFocusController.register(tableView, for: viewModel, side: side)
+        let becameActive = isActive && !coordinator.isActive
         tableView.parentRowIndex = coordinator.parentRowIndex
+        tableView.openParentDirectory = { [weak coordinator] in
+            coordinator?.openParentDirectory()
+        }
+        tableView.activatePanel = { [weak coordinator] in
+            coordinator?.activatePanel()
+        }
+        tableView.backButton = { [weak coordinator] in
+            coordinator?.handleBackButton()
+        }
         tableView.backgroundColor = isActive ? Palette.panelActive : Palette.panel
         scrollView.backgroundColor = isActive ? Palette.panelActive : Palette.panel
         coordinator.isActive = isActive
+
+        if becameActive {
+            if !FileTableFocusController.focus(viewModel: viewModel, side: side) {
+                DispatchQueue.main.async { [weak tableView] in
+                    guard let tableView, let window = tableView.window else { return }
+                    window.makeFirstResponder(tableView)
+                }
+            }
+        }
 
         if coordinator.configuration != configuration {
             let appearanceChanged = coordinator.configuration.appearance != configuration.appearance
@@ -129,7 +200,7 @@ struct FileTableView: NSViewRepresentable {
         var viewModel: MainViewModel
         var side: PanelSide
         weak var tableView: FileListNSTableView?
-        var isActive = true
+        var isActive = false
         /// Uygulanmış görünüm yapılandırması.
         var configuration: FileTableConfiguration
 
@@ -195,7 +266,7 @@ struct FileTableView: NSViewRepresentable {
                 column.width = configuration.widths[panelColumn.rawValue].map { CGFloat($0) }
                     ?? spec.defaultWidth * scale
                 column.headerCell.font = Appearance.headerFont
-                column.headerCell.alignment = spec.alignment
+                column.headerCell.alignment = spec.headerAlignment
                 column.sortDescriptorPrototype = NSSortDescriptor(
                     key: panelColumn.rawValue,
                     ascending: true
@@ -226,8 +297,22 @@ struct FileTableView: NSViewRepresentable {
             let minWidth: CGFloat
             let defaultWidth: CGFloat
             let alignment: NSTextAlignment
+            let headerAlignment: NSTextAlignment
+
+            init(
+                minWidth: CGFloat,
+                defaultWidth: CGFloat,
+                alignment: NSTextAlignment,
+                headerAlignment: NSTextAlignment = .center
+            ) {
+                self.minWidth = minWidth
+                self.defaultWidth = defaultWidth
+                self.alignment = alignment
+                self.headerAlignment = headerAlignment
+            }
         }
 
+        /// Tüm sütun başlıkları, ait oldukları sütunun ortasında gösterilir.
         private static let columnSpecs: [String: ColumnSpec] = [
             "name": ColumnSpec(minWidth: 140, defaultWidth: 260, alignment: .left),
             "fileExtension": ColumnSpec(minWidth: 48, defaultWidth: 64, alignment: .left),
@@ -259,6 +344,11 @@ struct FileTableView: NSViewRepresentable {
             let target = IndexSet(items.indices.compactMap { index in
                 panel.selection.contains(items[index].url) ? index + rowOffset : nil
             })
+            if target.isEmpty,
+               let parentRowIndex,
+               tableView.selectedRowIndexes.contains(parentRowIndex) {
+                return
+            }
             guard target != tableView.selectedRowIndexes else { return }
 
             isApplyingSelection = true
@@ -496,6 +586,25 @@ struct FileTableView: NSViewRepresentable {
             viewModel.open(item)
         }
 
+        /// Üst klasör satırı URL tabanlı seçime dahil olmadığından ayrı açılır.
+        func openParentDirectory() {
+            guard panel.canGoUp else { return }
+            viewModel.activate(side: side)
+            panel.goUp()
+        }
+
+        /// Paneli etkinleştirir. Seçim değişmese bile (boş alana veya zaten
+        /// seçili bir satıra tıklama) tıklanan panel odağı alır.
+        func activatePanel() {
+            viewModel.activate(side: side)
+        }
+
+        /// Fare geri tuşu: ayar açıksa bu panelde bir üst klasöre döner.
+        func handleBackButton() {
+            guard viewModel.settings.mouseBackButtonEnabled, panel.canGoUp else { return }
+            openParentDirectory()
+        }
+
         /// Boş alana tıklanınca seçim temizlenir (NSTableView bunu kendisi yapar).
         func makeContextMenu() -> NSMenu {
             let menu = NSMenu()
@@ -519,69 +628,137 @@ struct FileTableView: NSViewRepresentable {
 
             let hasSelection = !panel.selection.isEmpty
             let hasSingle = panel.selection.count == 1
+            let selectedItems = panel.selectedItems
+            let hasOnlyApplications = !selectedItems.isEmpty
+                && selectedItems.allSatisfy { $0.url.pathExtension.lowercased() == "app" }
 
-            menu.addItem(menuItem("menu.file.open", #selector(openSelection), enabled: hasSelection, key: ""))
-            menu.addItem(menuItem("menu.file.quickLook", #selector(quickLookSelection), enabled: hasSelection, key: ""))
+            menu.addItem(menuItem("menu.file.open", #selector(openSelection), enabled: hasSelection, key: "o", modifiers: .command))
+            // "Diğer Pencerede Aç" yalnızca tek bir klasör seçiliyken sunulur.
+            if hasSingle, selectedItems.first?.isDirectory == true {
+                menu.addItem(
+                    menuItem(
+                        "menu.file.openInOtherPanel",
+                        #selector(openInOtherPanel),
+                        enabled: true,
+                        key: ""
+                    )
+                )
+            }
+            menu.addItem(menuItem("menu.file.quickLook", #selector(quickLookSelection), enabled: hasSelection, key: " "))
             menu.addItem(menuItem("menu.file.openWith", #selector(openWith), enabled: hasSelection, key: ""))
             let hasArchive = panel.selectedItems.contains { ArchiveFormat.detect($0.url) != nil }
             menu.addItem(menuItem("menu.tools.openArchive", #selector(openArchive), enabled: hasArchive, key: ""))
 
             menu.addItem(.separator())
-            menu.addItem(menuItem("menu.edit.copy", #selector(copySelection), enabled: hasSelection, key: ""))
-            menu.addItem(menuItem("menu.edit.cut", #selector(cutSelection), enabled: hasSelection, key: ""))
-            menu.addItem(menuItem("menu.edit.paste", #selector(pasteSelection), enabled: true, key: ""))
+            menu.addItem(menuItem("menu.edit.cut", #selector(cutSelection), enabled: hasSelection, key: "x", modifiers: .command))
+            menu.addItem(menuItem("menu.edit.copy", #selector(copySelection), enabled: hasSelection, key: "c", modifiers: .command))
+            menu.addItem(menuItem("menu.edit.paste", #selector(pasteSelection), enabled: true, key: "v", modifiers: .command))
+            menu.addItem(menuItem("menu.edit.selectAll", #selector(selectAllItems), enabled: !panel.items.isEmpty, key: "a", modifiers: .command))
             if hasSelection, !viewModel.favorites.groups.isEmpty {
-                menu.addItem(menuItem("favorites.addSelection", #selector(addSelectionToFavorites), enabled: true, key: ""))
+                menu.addItem(
+                    menuItem(
+                        hasOnlyApplications ? "favorites.addApplication" : "favorites.addSelection",
+                        hasOnlyApplications
+                            ? #selector(addSelectedApplicationsToFavorites)
+                            : #selector(addSelectionToFavorites),
+                        enabled: true,
+                        key: ""
+                    )
+                )
             }
 
             menu.addItem(.separator())
             menu.addItem(menuItem("menu.file.newFolder", #selector(newFolder), enabled: true, key: ""))
-            menu.addItem(menuItem("menu.tools.openTerminal", #selector(openTerminal), enabled: true, key: ""))
-            menu.addItem(menuItem("menu.edit.rename", #selector(renameSelection), enabled: hasSingle, key: ""))
+            menu.addItem(additionalMenuItem("menu.tools.openTerminal", #selector(openTerminal), action: .terminal, enabled: true))
+            menu.addItem(additionalMenuItem("menu.edit.rename", #selector(renameSelection), action: .rename, enabled: hasSingle))
             menu.addItem(menuItem("menu.edit.batchRename", #selector(batchRename), enabled: hasSelection, key: ""))
-            menu.addItem(menuItem("menu.file.copyPath", #selector(copyPath), enabled: hasSelection, key: ""))
+            menu.addItem(additionalMenuItem("menu.file.copyPath", #selector(copyPath), action: .copyPath, enabled: hasSelection))
 
             menu.addItem(.separator())
-            menu.addItem(menuItem("menu.tools.properties", #selector(showProperties), enabled: hasSelection, key: ""))
+            menu.addItem(additionalMenuItem("menu.tools.properties", #selector(showProperties), action: .properties, enabled: hasSelection))
             menu.addItem(menuItem("menu.file.reveal", #selector(revealInFinder), enabled: true, key: ""))
             menu.addItem(menuItem("menu.tools.revealCurrent", #selector(revealDirectoryInFinder), enabled: true, key: ""))
 
             menu.addItem(.separator())
-            menu.addItem(menuItem("menu.file.trash", #selector(trashSelection), enabled: hasSelection, key: ""))
-            menu.addItem(menuItem("menu.file.deletePermanently", #selector(deletePermanently), enabled: hasSelection, key: ""))
+            menu.addItem(menuItem("menu.file.trash", #selector(trashSelection), enabled: hasSelection, key: "\u{8}", modifiers: .command))
+            menu.addItem(menuItem("menu.file.deletePermanently", #selector(deletePermanently), enabled: hasSelection, key: "\u{8}", modifiers: [.command, .option]))
 
             menu.addItem(.separator())
-            menu.addItem(menuItem("menu.view.refresh", #selector(refresh), enabled: true, key: ""))
+            menu.addItem(additionalMenuItem("menu.view.refresh", #selector(refresh), action: .refresh, enabled: true))
             menu.addItem(
                 menuItem(
                     panel.isShowingHiddenFiles ? "menu.file.hideHidden" : "menu.file.showHidden",
                     #selector(toggleHidden),
                     enabled: true,
-                    key: ""
+                    key: ".",
+                    modifiers: [.command, .shift]
                 )
             )
         }
 
-        private func menuItem(_ titleKey: String, _ action: Selector, enabled: Bool, key: String) -> NSMenuItem {
+        private func menuItem(
+            _ titleKey: String,
+            _ action: Selector,
+            enabled: Bool,
+            key: String,
+            modifiers: NSEvent.ModifierFlags = []
+        ) -> NSMenuItem {
             let item = NSMenuItem(title: L.t(titleKey), action: action, keyEquivalent: key)
             item.target = self
             item.isEnabled = enabled
+            item.keyEquivalentModifierMask = modifiers
             return item
+        }
+
+        private func additionalMenuItem(
+            _ titleKey: String,
+            _ selector: Selector,
+            action: KeyboardShortcutManager.AdditionalShortcutAction,
+            enabled: Bool
+        ) -> NSMenuItem {
+            let shortcut = viewModel.settings.additionalKeyBindings.key(for: action)
+            return menuItem(
+                titleKey,
+                selector,
+                enabled: enabled,
+                key: shortcut.keyEquivalent,
+                modifiers: shortcut.modifiers
+            )
         }
 
         @objc private func openSelection() { viewModel.openSelection() }
         @objc private func quickLookSelection() { viewModel.quickLookSelection() }
         @objc private func openWith() { viewModel.openSelectionWithApplication() }
+        /// Seçili klasörü karşı panelde açar.
+        @objc private func openInOtherPanel() {
+            guard let item = panel.selectedItems.first else { return }
+            viewModel.openInOtherPanel(item, from: side)
+        }
         @objc private func openArchive() { viewModel.openSelectedArchive() }
         @objc private func copySelection() { viewModel.copySelection() }
         @objc private func cutSelection() { viewModel.cutSelection() }
         @objc private func pasteSelection() { viewModel.paste() }
+        @objc private func selectAllItems() { viewModel.selectAll() }
         @objc private func addSelectionToFavorites() {
             viewModel.activate(side: side)
             guard viewModel.addSelectionToFavorites() == 0 else { return }
             viewModel.alert = UserFacingAlert(
                 title: L.t("favorites.add.title"),
                 message: L.t("favorites.add.exists")
+            )
+        }
+        @objc private func addSelectedApplicationsToFavorites() {
+            viewModel.activate(side: side)
+            let applications = panel.selectedItems.filter {
+                $0.url.pathExtension.lowercased() == "app"
+            }
+            let added = applications.reduce(into: 0) { count, item in
+                if viewModel.addApplicationToFavorites(item.url) { count += 1 }
+            }
+            guard added == 0 else { return }
+            viewModel.alert = UserFacingAlert(
+                title: L.t("favorites.add.title"),
+                message: L.t("favorites.application.exists")
             )
         }
         @objc private func renameSelection() { viewModel.beginRename() }
@@ -738,10 +915,24 @@ final class FileCellView: NSTableCellView {
     }
 }
 
-/// Boş alana yapılan tıklamada seçimi temizleyen, `Return`/`Space` tuşlarını
-/// yönlendiriciye bırakan tablo görünümü.
+/// Boş alana yapılan tıklamada seçimi temizleyen ve üst klasör satırını klavyeyle
+/// açabilen tablo görünümü.
 final class FileListNSTableView: NSTableView {
     var parentRowIndex: Int?
+    var openParentDirectory: (() -> Void)?
+    /// Tabloya yapılan her tıklamada paneli etkinleştirmek için çağrılır.
+    var activatePanel: (() -> Void)?
+    /// Fare geri tuşu basışında çağrılır.
+    var backButton: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if (event.keyCode == 36 || event.keyCode == 76),
+           selectedRow == parentRowIndex {
+            openParentDirectory?()
+            return
+        }
+        super.keyDown(with: event)
+    }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
@@ -758,7 +949,21 @@ final class FileListNSTableView: NSTableView {
         return super.menu(for: event)
     }
 
+    /// Fare yan tuşları tabloya doğrudan ulaşırsa da üst klasöre dönülür;
+    /// yerel olay izleyicisi herhangi bir nedenle olayı göremezse bu yol
+    /// ikinci güvence olarak çalışır.
+    override func otherMouseDown(with event: NSEvent) {
+        if event.buttonNumber >= 3 {
+            backButton?()
+            return
+        }
+        super.otherMouseDown(with: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        // Seçim değişmediğinde `tableViewSelectionDidChange` çağrılmadığı için
+        // panel etkinleşmiyordu; etkinleştirme her tıklamada burada yapılır.
+        activatePanel?()
         let point = convert(event.locationInWindow, from: nil)
         if row(at: point) < 0 {
             deselectAll(nil)

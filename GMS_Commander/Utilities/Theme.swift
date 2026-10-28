@@ -40,6 +40,17 @@ enum ThemeID: String, CaseIterable, Identifiable, Sendable {
     var isLight: Bool { self == .daylight }
 }
 
+/// Dosya panellerinde kullanılan sabit genişlikli yazı tipi görünümü.
+enum InterfaceFontStyle: String, CaseIterable, Identifiable, Sendable {
+    /// macOS'in güncel sabit genişlikli sistem yazı tipi.
+    case modern
+    /// Eski DOS/Windows terminal ekranlarına yakın, daha köşeli Monaco görünümü.
+    case classicDOS
+
+    var id: String { rawValue }
+    var localizedName: String { L.t("theme.fontStyle.\(rawValue)") }
+}
+
 // MARK: - Palet
 
 /// Bir temanın tüm renkleri. `NSColor` tabanlıdır; SwiftUI katmanı `Theme`
@@ -197,6 +208,9 @@ enum Appearance {
     /// Liste ve arayüz yazılarının taban boyutu (punto).
     static var fontSize: Double = ThemeManager.defaultFontSize
 
+    /// Etkin sabit genişlikli yazı tipi görünümü.
+    static var fontStyle: InterfaceFontStyle = .modern
+
     /// Liste satır yüksekliği.
     static var rowHeight: CGFloat {
         max(18, (fontSize * 1.55).rounded())
@@ -219,12 +233,24 @@ enum Appearance {
 
     /// Liste için sabit genişlikli yazı tipi.
     static func mono(_ weight: NSFont.Weight = .regular) -> NSFont {
-        NSFont.monospacedSystemFont(ofSize: tableFontSize, weight: weight)
+        fixedPitchFont(ofSize: tableFontSize, weight: weight)
     }
 
-    /// Sütun başlığı yazı tipi.
+    /// Sütun başlığı yazı tipi. Panelin yol çubuğundaki yazıyla
+    /// (`Theme.monoControl`) aynı aile, punto ve ağırlıktadır.
     static var headerFont: NSFont {
-        NSFont.systemFont(ofSize: max(tableFontSize - 1.5, 9), weight: .semibold)
+        fixedPitchFont(ofSize: max(tableFontSize - 1, 9), weight: .regular)
+    }
+
+    /// Seçilen görünüme göre AppKit sabit genişlikli yazı tipi üretir.
+    static func fixedPitchFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        guard fontStyle == .classicDOS else {
+            return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+        }
+        let name = weight.rawValue >= NSFont.Weight.semibold.rawValue ? "Monaco-Bold" : "Monaco"
+        return NSFont(name: name, size: size)
+            ?? NSFont.userFixedPitchFont(ofSize: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: weight)
     }
 
     /// Satır simgesi kenar uzunluğu.
@@ -255,6 +281,14 @@ enum Palette {
 
 /// `Palette` renklerinin ve yazı tiplerinin SwiftUI karşılıkları.
 enum Theme {
+    /// Seçilen görünüme göre SwiftUI sabit genişlikli yazı tipi üretir.
+    static func mono(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        if Appearance.fontStyle == .classicDOS {
+            return .custom("Monaco", size: size).weight(weight)
+        }
+        return .system(size: size, weight: weight, design: .monospaced)
+    }
+
     static var window: Color { Color(nsColor: Palette.window) }
     static var panel: Color { Color(nsColor: Palette.panel) }
     static var panelActive: Color { Color(nsColor: Palette.panelActive) }
@@ -270,17 +304,17 @@ enum Theme {
 
     /// Küçük, sabit genişlikli sayı yazı tipi.
     static var monoSmall: Font {
-        .system(size: Appearance.secondaryFontSize, design: .monospaced)
+        mono(size: Appearance.secondaryFontSize)
     }
 
     /// Liste yazı tipi.
     static var monoList: Font {
-        .system(size: Appearance.tableFontSize, design: .monospaced)
+        mono(size: Appearance.tableFontSize)
     }
 
     /// Panel yolu ve arama alanı yazı tipi.
     static var monoControl: Font {
-        .system(size: max(Appearance.tableFontSize - 1, 9), design: .monospaced)
+        mono(size: max(Appearance.tableFontSize - 1, 9))
     }
 
     /// Genel arayüz yazı tipi.
@@ -290,7 +324,7 @@ enum Theme {
 
     /// İşlev tuşu rozeti yazı tipi.
     static var keyChipFont: Font {
-        .system(size: max(Appearance.keyFontSize - 1.5, 8), weight: .bold, design: .monospaced)
+        mono(size: max(Appearance.keyFontSize - 1.5, 8), weight: .bold)
     }
 }
 
@@ -309,6 +343,7 @@ final class ThemeManager: ObservableObject {
     enum Keys {
         static let themeID = "settings.themeID"
         static let fontSize = "settings.fontSize"
+        static let fontStyle = "settings.fontStyle"
         static let functionKeyFontSize = "settings.functionKeyFontSize"
         static let functionKeyButtonScale = "settings.functionKeyButtonScale"
     }
@@ -334,6 +369,15 @@ final class ThemeManager: ObservableObject {
             }
             guard fontSize != oldValue else { return }
             defaults.set(fontSize, forKey: Keys.fontSize)
+            apply()
+        }
+    }
+
+    /// Modern macOS veya klasik DOS/terminal yazı tipi görünümü.
+    @Published var fontStyle: InterfaceFontStyle {
+        didSet {
+            guard fontStyle != oldValue else { return }
+            defaults.set(fontStyle.rawValue, forKey: Keys.fontStyle)
             apply()
         }
     }
@@ -371,6 +415,8 @@ final class ThemeManager: ObservableObject {
         self.themeID = ThemeID(rawValue: storedTheme) ?? .voidCommander
         let storedFontSize = defaults.object(forKey: Keys.fontSize) as? Double
         self.fontSize = Self.clampFontSize(storedFontSize ?? Self.defaultFontSize)
+        let storedFontStyle = defaults.string(forKey: Keys.fontStyle) ?? ""
+        self.fontStyle = InterfaceFontStyle(rawValue: storedFontStyle) ?? .modern
         self.functionKeyFontSize = Self.clampFunctionKeyFontSize(
             defaults.object(forKey: Keys.functionKeyFontSize) as? Double ?? 13
         )
@@ -401,10 +447,16 @@ final class ThemeManager: ObservableObject {
         fontSize = Self.defaultFontSize
     }
 
+    /// Yazı tipi görünümünü güncel macOS varsayılanına döndürür.
+    func resetFontStyle() {
+        fontStyle = .modern
+    }
+
     /// Etkin temayı `Appearance`'a uygular.
     func apply() {
         Appearance.spec = ThemeSpec.make(themeID)
         Appearance.fontSize = Self.clampFontSize(fontSize)
+        Appearance.fontStyle = fontStyle
     }
 }
 
@@ -416,23 +468,29 @@ final class ThemeManager: ObservableObject {
 struct AppearanceSignature: Equatable {
     let themeID: ThemeID
     let fontSize: Double
+    let fontStyle: InterfaceFontStyle
 
-    init(themeID: ThemeID, fontSize: Double) {
+    init(themeID: ThemeID, fontSize: Double, fontStyle: InterfaceFontStyle) {
         self.themeID = themeID
         self.fontSize = fontSize
+        self.fontStyle = fontStyle
     }
 }
 
 extension ThemeManager {
     /// Etkin görünüm imzası.
     var signature: AppearanceSignature {
-        AppearanceSignature(themeID: themeID, fontSize: fontSize)
+        AppearanceSignature(themeID: themeID, fontSize: fontSize, fontStyle: fontStyle)
     }
 }
 
 extension AppearanceSignature {
     /// Süreç genelindeki etkin imza.
     static var current: AppearanceSignature {
-        AppearanceSignature(themeID: Appearance.spec.themeID, fontSize: Appearance.fontSize)
+        AppearanceSignature(
+            themeID: Appearance.spec.themeID,
+            fontSize: Appearance.fontSize,
+            fontStyle: Appearance.fontStyle
+        )
     }
 }

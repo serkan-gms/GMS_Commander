@@ -133,6 +133,13 @@ struct PropertiesSheet: View {
             }
 
             HStack {
+                Button {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(item.url.path, forType: .string)
+                } label: {
+                    Label(L.t("properties.copyPath"), systemImage: "doc.on.doc")
+                }
                 Spacer()
                 Button(L.t("common.close")) { dismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -310,4 +317,6 @@ enum AppInfo {
     static let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.0.0"
     static let build = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "1"
     static let name = (Bundle.main.infoDictionary?["CFBundleName"] as? String) ?? "GMS Commander"
+    /// Programı hazırlayan kişi.
+    static let author = "Serkan GÜLTEKİN"
 }

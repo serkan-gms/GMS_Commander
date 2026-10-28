@@ -1152,6 +1152,31 @@ func testSettingsStore() {
     expectEqual(store.keyBindings.label(for: .terminal), "F9", "Çakışmada eski atama korunuyor")
     store.resetFunctionKeyBindings()
     expectEqual(store.keyBindings.label(for: .copy), "F5", "Varsayılana dönüş çalışıyor")
+
+    expectEqual(store.additionalKeyBindings.key(for: .rename), .commandShiftR, "Varsayılan yeniden adlandırma kısayolu")
+    expectEqual(store.setAdditionalShortcut(.commandShiftP, for: .rename), nil, "Ek kısayol değiştiriliyor")
+    expectEqual(store.additionalKeyBindings.key(for: .rename), .commandShiftP, "Yeni ek kısayol uygulanıyor")
+    expectEqual(
+        store.setAdditionalShortcut(.commandShiftP, for: .properties),
+        .rename,
+        "Çakışan ek kısayol reddediliyor"
+    )
+    let reloadedAdditional = SettingsStore(defaults: defaults)
+    expectEqual(reloadedAdditional.additionalKeyBindings.key(for: .rename), .commandShiftP, "Ek kısayol kalıcı")
+
+    store.setVisibleColumns([.name, .fileExtension, .size], for: .left)
+    store.setColumnWidths([PanelColumn.fileExtension.rawValue: 110], for: .left)
+    let reloadedColumns = SettingsStore(defaults: defaults)
+    expectEqual(
+        reloadedColumns.visibleColumns(for: .left),
+        [.name, .fileExtension, .size],
+        "Boyut ve uzantı sütunları ayrı açılıp kapanabiliyor"
+    )
+    expectEqual(
+        reloadedColumns.columnWidths(for: .left)[PanelColumn.fileExtension.rawValue],
+        110,
+        "Uzantı sütunu genişliği kalıcı"
+    )
 }
 
 @MainActor
@@ -1167,16 +1192,20 @@ func testThemeManager() {
         defaults.removePersistentDomain(forName: suiteName)
         ThemeManager.shared.themeID = .voidCommander
         ThemeManager.shared.resetFontSize()
+        ThemeManager.shared.resetFontStyle()
     }
 
     let theme = ThemeManager(defaults: defaults)
     theme.themeID = .graphite
     theme.fontSize = 16
+    theme.fontStyle = .classicDOS
     let reloaded = ThemeManager(defaults: defaults)
     expectEqual(reloaded.themeID, .graphite, "Tema tercihi kalıcı")
     expectEqual(reloaded.fontSize, 16, "Yazı boyutu kalıcı")
+    expectEqual(reloaded.fontStyle, .classicDOS, "Klasik DOS yazı tipi tercihi kalıcı")
     expectEqual(reloaded.signature.themeID, .graphite, "Görünüm imzası etkin temayı içeriyor")
     expectEqual(reloaded.signature.fontSize, 16, "Görünüm imzası etkin yazı boyutunu içeriyor")
+    expectEqual(reloaded.signature.fontStyle, .classicDOS, "Görünüm imzası yazı tipi tercihini içeriyor")
     expectEqual(
         ThemeManager.clampFontSize(99),
         ThemeManager.fontSizeRange.upperBound,
@@ -1299,8 +1328,14 @@ func testFavoritesViewModel() {
     expect(reloaded.toggle(url: folder), "Toggle klasörü ekliyor")
     expect(!reloaded.toggle(url: folder), "Toggle kayıtlı klasörü kaldırıyor")
     let favoriteFile = writeFile("favorites-file.txt", in: directory)
-    expect(reloaded.add(url: favoriteFile), "Dosya hızlı erişime ekleniyor")
-    expectEqual(reloaded.items.last?.isDirectory, false, "Dosya kaydı klasör değil")
+    expectEqual(reloaded.kind(of: favoriteFile), .file, "Dosya türü doğru belirleniyor")
+    expect(!reloaded.add(url: favoriteFile), "Dosya klasör bölümüne eklenmiyor")
+    if let applicationsGroupID {
+        expect(reloaded.add(url: favoriteFile, to: applicationsGroupID), "Dosya Uygulamalar bölümüne ekleniyor")
+        expectEqual(reloaded.items.last?.isDirectory, false, "Dosya kaydı klasör değil")
+    } else {
+        expect(false, "Uygulamalar bölümü bulunuyor")
+    }
     expect(
         !reloaded.add(url: directory.appendingPathComponent("missing", isDirectory: true)),
         "Olmayan klasör eklenmiyor"
@@ -1313,17 +1348,51 @@ func testFavoritesViewModel() {
     let customGroup = reloaded.addGroup(name: "Projeler", colorHex: 0x42C98A)
     expect(customGroup != nil, "Özel renkli bölüm ekleniyor")
     expect(reloaded.addGroup(name: "   ") == nil, "Boş bölüm adı reddediliyor")
-    let favoriteID = reloaded.items.first?.id
+    expect(reloaded.add(url: folder), "Klasör yeniden hızlı erişime ekleniyor")
+    let favoriteID = reloaded.items.first(where: { $0.path == folder.standardizedFileURL.path })?.id
     if let favoriteID, let customGroup {
         reloaded.move(id: favoriteID, to: customGroup.id)
-        expectEqual(reloaded.items.first?.groupID, customGroup.id, "Öğe özel bölüme taşınıyor")
+        expectEqual(
+            reloaded.items.first(where: { $0.id == favoriteID })?.groupID,
+            customGroup.id,
+            "Öğe özel bölüme taşınıyor"
+        )
         reloaded.rename(id: favoriteID, to: "Özel Ad")
-        expectEqual(reloaded.items.first?.name, "Özel Ad", "Hızlı erişim görünen adı değişiyor")
+        expectEqual(
+            reloaded.items.first(where: { $0.id == favoriteID })?.name,
+            "Özel Ad",
+            "Hızlı erişim görünen adı değişiyor"
+        )
         reloaded.removeGroup(id: customGroup.id)
         expect(reloaded.groups.contains(where: { $0.id == customGroup.id }) == false, "Özel bölüm siliniyor")
-        expectEqual(reloaded.items.first?.groupID, reloaded.groups.first?.id, "Silinen bölümdekiler başka bölüme taşınıyor")
+        expectEqual(
+            reloaded.items.first(where: { $0.id == favoriteID })?.groupID,
+            reloaded.groups.first?.id,
+            "Silinen bölümdekiler başka bölüme taşınıyor"
+        )
     } else {
         expect(false, "Bölüm düzenleme için kayıt ve grup bulunuyor")
+    }
+
+    let fileGroup = reloaded.addGroup(name: "Belgelerim", colorHex: 0xEF6461, kind: .file)
+    expectEqual(fileGroup?.kind, .file, "Bölüm dosya tipinde oluşturuluyor")
+    if let fileGroup, let applicationsGroupID {
+        expect(reloaded.canAdd(url: favoriteFile, to: fileGroup.id), "Dosya, dosya bölümüne uygun")
+        expect(!reloaded.canAdd(url: folder, to: fileGroup.id), "Klasör, dosya bölümüne uygun değil")
+        expect(
+            reloaded.canAdd(url: folder, to: applicationsGroupID) == false,
+            "Klasör, Uygulamalar bölümüne uygun değil"
+        )
+        var renamed = fileGroup
+        renamed.name = "Belgeler"
+        reloaded.updateGroup(renamed)
+        expectEqual(
+            reloaded.groups.first(where: { $0.id == fileGroup.id })?.kind,
+            .file,
+            "Bölüm güncellenirken kayıt tipi korunuyor"
+        )
+    } else {
+        expect(false, "Dosya bölümü oluşturuluyor")
     }
 
     reloaded.resetToDefaults()
@@ -1403,6 +1472,7 @@ func testFilePanelViewModel() async {
     panel.goUp()
     await waitForLoad(panel)
     expectEqual(panel.currentDirectory.standardizedFileURL, dir.standardizedFileURL, "Üst klasöre çıkma")
+    expectEqual(panel.focusedItem?.name, "Alt", "Üst klasörde çıkılan alt klasör seçiliyor")
 
     expectEqual(panel.sortKey, .name, "Varsayılan sıralama anahtarı")
     panel.sort(by: .name)
@@ -1517,6 +1587,11 @@ func testFunctionKeys() {
 
     expectEqual(KeyboardShortcutManager.command(keyCode: 96, modifiers: []), .function(.copy), "Komut işlev tuşunu döndürür")
     expectEqual(KeyboardShortcutManager.command(keyCode: 49, modifiers: []), .bare(.quickLook), "Komut yalın tuşu döndürür")
+    expectEqual(
+        KeyboardShortcutManager.command(keyCode: 15, modifiers: [.command, .shift]),
+        .additional(.rename),
+        "Değiştirilebilir yeniden adlandırma kısayolu çalışıyor"
+    )
     expect(KeyboardShortcutManager.command(keyCode: 0, modifiers: []) == nil, "Bilinmeyen tuş komut üretmez")
 
     let customBindings = KeyboardShortcutManager.FunctionKeyBindings(

@@ -228,10 +228,139 @@ enum KeyboardShortcutManager {
         var title: String { L.t("fkey.\(rawValue)") }
     }
 
+    /// macOS'in sabit evrensel kısayolları dışında kullanıcının değiştirebildiği
+    /// sık kullanılan eylemler.
+    enum AdditionalShortcutAction: String, CaseIterable, Identifiable, Equatable {
+        case rename
+        case copyPath
+        case properties
+        case terminal
+        case refresh
+
+        var id: String { rawValue }
+        var title: String { L.t("shortcut.action.\(rawValue)") }
+    }
+
+    /// Çakışma riski düşük, kullanıcı tarafından seçilebilen kısayol havuzu.
+    enum AdditionalShortcutKey: String, CaseIterable, Identifiable, Hashable {
+        case none
+        case commandR
+        case commandShiftR
+        case commandOptionC
+        case commandI
+        case controlGrave
+        case commandShiftP
+        case commandOptionP
+        case commandShiftK
+        case commandOptionT
+        case commandShiftB
+        case commandOptionB
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .none: return L.t("shortcut.none")
+            case .commandR: return "⌘R"
+            case .commandShiftR: return "⇧⌘R"
+            case .commandOptionC: return "⌥⌘C"
+            case .commandI: return "⌘I"
+            case .controlGrave: return "⌃`"
+            case .commandShiftP: return "⇧⌘P"
+            case .commandOptionP: return "⌥⌘P"
+            case .commandShiftK: return "⇧⌘K"
+            case .commandOptionT: return "⌥⌘T"
+            case .commandShiftB: return "⇧⌘B"
+            case .commandOptionB: return "⌥⌘B"
+            }
+        }
+
+        var keyCode: UInt16? {
+            switch self {
+            case .none: return nil
+            case .commandR, .commandShiftR: return 15
+            case .commandOptionC: return 8
+            case .commandI: return 34
+            case .controlGrave: return 50
+            case .commandShiftP, .commandOptionP: return 35
+            case .commandShiftK: return 40
+            case .commandOptionT: return 17
+            case .commandShiftB, .commandOptionB: return 11
+            }
+        }
+
+        var modifiers: NSEvent.ModifierFlags {
+            switch self {
+            case .none: return []
+            case .commandR, .commandI: return [.command]
+            case .commandShiftR, .commandShiftP, .commandShiftK, .commandShiftB:
+                return [.command, .shift]
+            case .commandOptionC, .commandOptionP, .commandOptionT, .commandOptionB:
+                return [.command, .option]
+            case .controlGrave: return [.control]
+            }
+        }
+
+        /// AppKit bağlam menülerinde gösterilecek tuş.
+        var keyEquivalent: String {
+            switch self {
+            case .none: return ""
+            case .commandR, .commandShiftR: return "r"
+            case .commandOptionC: return "c"
+            case .commandI: return "i"
+            case .controlGrave: return "`"
+            case .commandShiftP, .commandOptionP: return "p"
+            case .commandShiftK: return "k"
+            case .commandOptionT: return "t"
+            case .commandShiftB, .commandOptionB: return "b"
+            }
+        }
+    }
+
+    struct AdditionalShortcutBindings: Equatable {
+        private(set) var keys: [AdditionalShortcutAction: AdditionalShortcutKey]
+
+        static let `default` = AdditionalShortcutBindings(keys: [
+            .rename: .commandShiftR,
+            .copyPath: .commandOptionC,
+            .properties: .commandI,
+            .terminal: .controlGrave,
+            .refresh: .commandR
+        ])
+
+        init(keys: [AdditionalShortcutAction: AdditionalShortcutKey]) {
+            self.keys = keys
+        }
+
+        init(dictionary: [String: String]) {
+            var resolved = Self.default.keys
+            for action in AdditionalShortcutAction.allCases {
+                guard let raw = dictionary[action.rawValue],
+                      let key = AdditionalShortcutKey(rawValue: raw) else { continue }
+                resolved[action] = key
+            }
+            self.keys = resolved
+        }
+
+        var dictionary: [String: String] {
+            Dictionary(uniqueKeysWithValues: keys.map { ($0.key.rawValue, $0.value.rawValue) })
+        }
+
+        func key(for action: AdditionalShortcutAction) -> AdditionalShortcutKey {
+            keys[action] ?? Self.default.keys[action] ?? .none
+        }
+
+        func action(for key: AdditionalShortcutKey) -> AdditionalShortcutAction? {
+            guard key != .none else { return nil }
+            return AdditionalShortcutAction.allCases.first { self.key(for: $0) == key }
+        }
+    }
+
     /// Yönlendiriciye teslim edilen klavye komutu.
     enum KeyCommand: Equatable {
         case bare(BareKeyAction)
         case function(FunctionKeyAction)
+        case additional(AdditionalShortcutAction)
     }
 
     /// Yalın tuş olayını eyleme çevirir. Değiştirici tuş basılıysa `nil` döner.
@@ -281,13 +410,21 @@ enum KeyboardShortcutManager {
     static func command(
         keyCode: UInt16,
         modifiers: NSEvent.ModifierFlags,
-        bindings: FunctionKeyBindings = .default
+        bindings: FunctionKeyBindings = .default,
+        additionalBindings: AdditionalShortcutBindings = .default
     ) -> KeyCommand? {
         if let function = functionKeyAction(keyCode: keyCode, modifiers: modifiers, bindings: bindings) {
             return .function(function)
         }
         if let bare = action(keyCode: keyCode, modifiers: modifiers) {
             return .bare(bare)
+        }
+        let flags = modifiers.intersection(.deviceIndependentFlagsMask)
+        for action in AdditionalShortcutAction.allCases {
+            let key = additionalBindings.key(for: action)
+            if key.keyCode == keyCode, key.modifiers == flags {
+                return .additional(action)
+            }
         }
         return nil
     }
@@ -305,6 +442,7 @@ final class KeyboardEventRouter {
     ///   - handler: Komutu işleyen kapanış.
     func start(
         bindings: KeyboardShortcutManager.FunctionKeyBindings = .default,
+        additionalBindings: KeyboardShortcutManager.AdditionalShortcutBindings = .default,
         handler: @escaping @MainActor (KeyboardShortcutManager.KeyCommand) -> Bool
     ) {
         guard monitor == nil else { return }
@@ -316,7 +454,8 @@ final class KeyboardEventRouter {
                 guard let command = KeyboardShortcutManager.command(
                     keyCode: keyCode,
                     modifiers: modifiers,
-                    bindings: bindings
+                    bindings: bindings,
+                    additionalBindings: additionalBindings
                 ) else {
                     return false
                 }

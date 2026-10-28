@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct FavoritesSidebarView: View {
     @ObservedObject var viewModel: MainViewModel
@@ -15,6 +16,8 @@ struct FavoritesSidebarView: View {
     @State private var selectedID: UUID?
     @State private var hoveredID: UUID?
     @State private var isEditingGroups = false
+    /// Sürükleme sırasında üzerine gelinen bölüm (görsel vurgu için).
+    @State private var dropTargetGroupID: UUID?
     @State private var favoriteToRename: FavoriteFolder?
     @State private var favoriteNameDraft = ""
 
@@ -69,33 +72,37 @@ struct FavoritesSidebarView: View {
 
     private var header: some View {
         HStack(spacing: 5) {
-            Image(systemName: "sidebar.left")
-                .foregroundStyle(SidebarPalette.secondaryText)
             Text(L.t("favorites.title"))
                 .font(.system(size: Appearance.keyFontSize, weight: .semibold))
                 .foregroundStyle(SidebarPalette.primaryText)
                 .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .layoutPriority(1)
 
             Spacer(minLength: 2)
 
             Menu {
                 ForEach(favorites.groups) { group in
                     Menu(group.name) {
+                        // Bölümün kayıt türüne uymayan eklemeler devre dışı bırakılır.
                         Button(L.t("favorites.addCurrent")) {
-                            addCurrentDirectory(to: group.id)
+                            addCurrentDirectory(to: group)
                         }
+                        .disabled(!favorites.canAdd(url: viewModel.activePanel.currentDirectory, to: group.id))
+
                         Button(L.t("favorites.addSelected", viewModel.activePanel.selection.count)) {
-                            addSelection(to: group.id)
+                            addSelection(to: group)
                         }
-                        .disabled(viewModel.activePanel.selection.isEmpty)
+                        .disabled(!canAddSelection(to: group))
                     }
                 }
             } label: {
-                Image(systemName: "plus.circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(SidebarPalette.accent)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(SidebarPalette.secondaryText)
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .help(L.t("favorites.add"))
 
             Button {
@@ -128,12 +135,74 @@ struct FavoritesSidebarView: View {
                 .padding(.bottom, 3)
 
             ForEach(groupItems) { item in
-                row(for: item, tint: tint)
+                row(for: item, tint: tint, groupRole: group.role)
+            }
+        }
+        .padding(.vertical, 1)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(dropTargetGroupID == group.id ? tint.opacity(0.16) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        // Panelden veya Finder'dan sürüklenen öğeler bölüme doğrudan eklenir.
+        .onDrop(of: [.fileURL], isTargeted: dropTargetBinding(for: group.id)) { providers in
+            handleDrop(providers, to: group)
+        }
+    }
+
+    private func dropTargetBinding(for groupID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { dropTargetGroupID == groupID },
+            set: { isTargeted in
+                if isTargeted {
+                    dropTargetGroupID = groupID
+                } else if dropTargetGroupID == groupID {
+                    dropTargetGroupID = nil
+                }
+            }
+        )
+    }
+
+    /// Sürükle-bırak ile gelen adresleri bölüme ekler.
+    ///
+    /// Türü uymayan öğeler atlanır; hiçbiri eklenemezse uyarı gösterilir.
+    private func handleDrop(_ providers: [NSItemProvider], to group: FavoriteGroup) -> Bool {
+        let matching = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !matching.isEmpty else { return false }
+
+        let groupID = group.id
+        Task { @MainActor in
+            var addedCount = 0
+            var rejectedCount = 0
+            for provider in matching {
+                guard let url = await Self.loadFileURL(from: provider) else { continue }
+                if favorites.add(url: url, to: groupID) {
+                    addedCount += 1
+                } else {
+                    rejectedCount += 1
+                }
+            }
+            if addedCount == 0 {
+                showAddFailure(for: group, rejectedCount: rejectedCount)
+            }
+        }
+        return true
+    }
+
+    /// `NSItemProvider` içeriğini dosya adresine çevirir.
+    private static func loadFileURL(from provider: NSItemProvider) async -> URL? {
+        await withCheckedContinuation { continuation in
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                guard let data, let url = URL(dataRepresentation: data, relativeTo: nil) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: url)
             }
         }
     }
 
-    private func row(for item: FavoriteFolder, tint: Color) -> some View {
+    private func row(for item: FavoriteFolder, tint: Color, groupRole: FavoriteGroupRole?) -> some View {
         let isCurrent = item.isDirectory
             && item.path == viewModel.activePanel.currentDirectory.standardizedFileURL.path
         let isSelected = item.id == selectedID
@@ -188,7 +257,10 @@ struct FavoritesSidebarView: View {
             }
 
             Menu(L.t("favorites.moveToGroup")) {
-                ForEach(favorites.groups.filter { $0.id != item.groupID }) { destination in
+                // Yalnızca kayıt türü uyan bölümler hedef olarak sunulur.
+                ForEach(favorites.groups.filter {
+                    $0.id != item.groupID && $0.kind == favorites.kind(of: item.url)
+                }) { destination in
                     Button(destination.name) { favorites.move(id: item.id, to: destination.id) }
                 }
             }
@@ -201,7 +273,10 @@ struct FavoritesSidebarView: View {
             Button(L.t("favorites.moveUp")) { favorites.moveItem(id: item.id, offset: -1) }
             Button(L.t("favorites.moveDown")) { favorites.moveItem(id: item.id, offset: 1) }
             Divider()
-            Button(L.t("favorites.remove"), role: .destructive) {
+            Button(
+                L.t(groupRole == .applications ? "favorites.removeApplication" : "favorites.remove"),
+                role: .destructive
+            ) {
                 if selectedID == item.id { selectedID = nil }
                 favorites.remove(id: item.id)
             }
@@ -209,17 +284,22 @@ struct FavoritesSidebarView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "info.circle")
-            Text(L.t("favorites.hint", favorites.items.count))
-            Spacer(minLength: 0)
-            Button {
-                isEditingGroups = true
-            } label: {
-                Text(L.t("favorites.edit"))
-                    .fontWeight(.medium)
+        VStack(alignment: .leading, spacing: 2) {
+            // Programı hazırlayan bilgisi, öğe sayısı/Düzenle satırının üstünde.
+            Text(AppInfo.author)
+                .fontWeight(.medium)
+            HStack(spacing: 4) {
+                Image(systemName: "info.circle")
+                Text(L.t("favorites.hint", favorites.items.count))
+                Spacer(minLength: 0)
+                Button {
+                    isEditingGroups = true
+                } label: {
+                    Text(L.t("favorites.edit"))
+                        .fontWeight(.medium)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .font(.system(size: max(Appearance.keyFontSize - 1, 10)))
         .foregroundStyle(SidebarPalette.secondaryText)
@@ -249,8 +329,19 @@ struct FavoritesSidebarView: View {
         func updateNSView(_ view: NSVisualEffectView, context: Context) {}
     }
 
-    private func addCurrentDirectory(to groupID: UUID) {
-        guard viewModel.addActiveDirectoryToFavorites(groupID: groupID) else {
+    /// Seçili öğelerin tamamı bölümün kayıt türüne uyuyor mu?
+    private func canAddSelection(to group: FavoriteGroup) -> Bool {
+        let urls = viewModel.activePanel.selection
+        return !urls.isEmpty && urls.allSatisfy { favorites.canAdd(url: $0, to: group.id) }
+    }
+
+    private func addCurrentDirectory(to group: FavoriteGroup) {
+        let url = viewModel.activePanel.currentDirectory
+        guard favorites.canAdd(url: url, to: group.id) else {
+            showKindMismatch(for: group)
+            return
+        }
+        guard viewModel.addActiveDirectoryToFavorites(groupID: group.id) else {
             viewModel.alert = UserFacingAlert(
                 title: L.t("favorites.add.title"),
                 message: L.t("favorites.add.exists")
@@ -259,12 +350,36 @@ struct FavoritesSidebarView: View {
         }
     }
 
-    private func addSelection(to groupID: UUID) {
-        let addedCount = viewModel.addSelectionToFavorites(groupID: groupID)
+    private func addSelection(to group: FavoriteGroup) {
+        guard canAddSelection(to: group) else {
+            showKindMismatch(for: group)
+            return
+        }
+        let addedCount = viewModel.addSelectionToFavorites(groupID: group.id)
         guard addedCount == 0 else { return }
         viewModel.alert = UserFacingAlert(
             title: L.t("favorites.add.title"),
             message: L.t("favorites.add.exists")
+        )
+    }
+
+    /// Ekleme başarısız olduğunda sebebi ayırt edip uygun uyarıyı gösterir.
+    private func showAddFailure(for group: FavoriteGroup, rejectedCount: Int) {
+        if rejectedCount > 0 {
+            showKindMismatch(for: group)
+        } else {
+            viewModel.alert = UserFacingAlert(
+                title: L.t("favorites.add.title"),
+                message: L.t("favorites.add.exists")
+            )
+        }
+    }
+
+    /// Bölümün kayıt türü ile sürüklenen öğenin türü uyuşmadığında gösterilir.
+    private func showKindMismatch(for group: FavoriteGroup) {
+        viewModel.alert = UserFacingAlert(
+            title: L.t("favorites.add.title"),
+            message: L.t("favorites.add.kindMismatch", group.name, group.kind.localizedTitle)
         )
     }
 
@@ -281,6 +396,8 @@ private struct FavoriteGroupEditor: View {
     @State private var groupNames: [UUID: String] = [:]
     @State private var newGroupName = ""
     @State private var newGroupColor: UInt32 = 0x4F9CF9
+    /// Yeni bölümün kabul edeceği kayıt türü.
+    @State private var newGroupKind: FavoriteGroupKind = .folder
 
     private let colors: [(String, UInt32)] = [
         ("favorites.color.blue", 0x4F9CF9),
@@ -318,11 +435,26 @@ private struct FavoriteGroupEditor: View {
                             )
                         )
 
+                        // Bölümün kabul ettiği kayıt türü (salt bilgi).
+                        Text(group.kind.localizedTitle)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Theme.border.opacity(0.25)))
+                            .fixedSize()
+
                         Menu {
                             ForEach(colors, id: \.1) { entry in
                                 Button {
                                     favorites.updateGroup(
-                                        FavoriteGroup(id: group.id, name: group.name, colorHex: entry.1)
+                                        FavoriteGroup(
+                                            id: group.id,
+                                            name: group.name,
+                                            colorHex: entry.1,
+                                            role: group.role,
+                                            kind: group.kind
+                                        )
                                     )
                                 } label: {
                                     Label(
@@ -363,6 +495,17 @@ private struct FavoriteGroupEditor: View {
 
                 HStack {
                     TextField(L.t("favorites.newGroupPlaceholder"), text: $newGroupName)
+
+                    // Yeni bölümün kayıt türü: Klasör veya Dosya.
+                    Picker("", selection: $newGroupKind) {
+                        ForEach(FavoriteGroupKind.selectableCases, id: \.self) { kind in
+                            Text(kind.localizedTitle).tag(kind)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 92)
+                    .help(L.t("favorites.kind"))
+
                     Menu {
                         ForEach(colors, id: \.1) { entry in
                             Button(L.t(entry.0)) { newGroupColor = entry.1 }
@@ -375,9 +518,14 @@ private struct FavoriteGroupEditor: View {
                     .menuStyle(.borderlessButton)
 
                     Button {
-                        guard let group = favorites.addGroup(name: newGroupName, colorHex: newGroupColor) else { return }
+                        guard let group = favorites.addGroup(
+                            name: newGroupName,
+                            colorHex: newGroupColor,
+                            kind: newGroupKind
+                        ) else { return }
                         groupNames[group.id] = group.name
                         newGroupName = ""
+                        newGroupKind = .folder
                     } label: {
                         Image(systemName: "plus.circle.fill")
                     }
@@ -412,7 +560,15 @@ private struct FavoriteGroupEditor: View {
             guard let name = groupNames[group.id],
                   !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   name != group.name else { continue }
-            favorites.updateGroup(FavoriteGroup(id: group.id, name: name, colorHex: group.colorHex))
+            favorites.updateGroup(
+                FavoriteGroup(
+                    id: group.id,
+                    name: name,
+                    colorHex: group.colorHex,
+                    role: group.role,
+                    kind: group.kind
+                )
+            )
         }
     }
 

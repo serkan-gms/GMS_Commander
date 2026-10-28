@@ -14,6 +14,7 @@ import SwiftUI
 struct FilePanelView: View {
     @ObservedObject var panel: FilePanelViewModel
     @ObservedObject var viewModel: MainViewModel
+    @ObservedObject var settings: SettingsStore
     let isActive: Bool
     /// Panel alt bilgi satırı gösterilsin mi?
     var showsFileInfo: Bool = true
@@ -33,7 +34,7 @@ struct FilePanelView: View {
             Rectangle()
                 .fill(isActive ? Theme.accent : Theme.border)
                 .frame(height: 1)
-            if viewModel.settings.showPreviewPane {
+            if settings.showPreviewPane {
                 // Önizleme bölmesi, soldaki tutamaç fareyle sürüklenerek
                 // büyütülüp küçültülebilir.
                 HStack(spacing: 0) {
@@ -76,7 +77,7 @@ struct FilePanelView: View {
             }
             Button(L.t("menu.tools.openTerminal")) {
                 viewModel.activate(side: panel.side)
-                viewModel.openTerminal()
+                viewModel.openTerminal(at: panel.currentDirectory)
             }
             Divider()
             Button(L.t("menu.edit.paste")) { viewModel.paste() }
@@ -253,6 +254,12 @@ struct FilePanelView: View {
             tabBar
 
             HStack(spacing: 4) {
+                // Sağ panelde yol aktarma oku, adres satırının sol ucunda
+                // (birleşim kenarına yakın) durur; sol panelde sağ uçtadır.
+                if showsTransferButton && panel.side == .right {
+                    transferButton
+                }
+
                 navigationButton("chevron.left", help: L.t("toolbar.back"), enabled: panel.canGoBack, action: panel.goBack)
                 navigationButton("chevron.right", help: L.t("toolbar.forward"), enabled: panel.canGoForward, action: panel.goForward)
                 navigationButton("arrow.up", help: L.t("toolbar.up"), enabled: panel.canGoUp, action: panel.goUp)
@@ -286,6 +293,10 @@ struct FilePanelView: View {
 
                 viewModeMenu
                 columnsMenu
+
+                if showsTransferButton && panel.side == .left {
+                    transferButton
+                }
             }
 
             searchField
@@ -293,6 +304,33 @@ struct FilePanelView: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 5)
         .background(isActive ? Theme.header : Theme.panel)
+    }
+
+    /// Yol aktarma oku yalnızca iki panel yan yana gösterilirken anlamlıdır.
+    private var showsTransferButton: Bool {
+        !settings.singlePanelMode && !settings.verticalSplit
+    }
+
+    /// Bu panelin açık klasör yolunu karşı panele aktaran düğme. Panel
+    /// etkinken mavi, etkin değilken gri görünür.
+    private var transferButton: some View {
+        Button {
+            viewModel.transferPath(from: panel.side)
+        } label: {
+            Image(systemName: panel.side == .left ? "arrow.right" : "arrow.left")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(isActive ? Color.white : Theme.textSecondary)
+                .frame(width: 20, height: 20)
+                .background(
+                    Circle().fill(isActive ? Theme.accent : Theme.statusBar)
+                )
+                .overlay(
+                    Circle().strokeBorder(isActive ? Theme.accent : Theme.border)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(L.t("panel.transferPath"))
     }
 
     /// Her panelin kendi yolunu gösteren breadcrumb ve mutlak yol düzenleyicisi.
@@ -343,6 +381,16 @@ struct FilePanelView: View {
                 guard let side = notification.userInfo?[Notification.beginPathEditingSideKey] as? PanelSide,
                       side == panel.side else { return }
                 beginEditing()
+            }
+            .contextMenu {
+                Button(L.t("menu.tools.openTerminal")) {
+                    viewModel.activate(side: panel.side)
+                    viewModel.openTerminal(at: panel.currentDirectory)
+                }
+                Button(L.t("menu.tools.revealCurrent")) {
+                    viewModel.activate(side: panel.side)
+                    viewModel.revealCurrentDirectory()
+                }
             }
         }
 
@@ -456,11 +504,11 @@ struct FilePanelView: View {
                 }
             } label: {
                 Image(systemName: isEditing ? "checkmark" : "pencil")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
             }
             .buttonStyle(.plain)
-            .fixedSize()
+            .frame(width: 24, height: 24)
             .help(L.t(isEditing ? "toolbar.applyPath" : "toolbar.editPath"))
         }
 
@@ -673,6 +721,9 @@ struct FilePanelView: View {
                 }
                 .disabled(column == .name)
             }
+            Divider()
+            columnWidthMenu(for: .fileExtension)
+            columnWidthMenu(for: .size)
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .font(.system(size: 10, weight: .medium))
@@ -681,6 +732,21 @@ struct FilePanelView: View {
         .menuStyle(.borderlessButton)
         .frame(width: 20)
         .help(L.t("columns.menuHelp"))
+    }
+
+    /// Uzantı ve boyut sütunları için hızlı genişlik seçenekleri.
+    private func columnWidthMenu(for column: PanelColumn) -> some View {
+        Menu(L.t("columns.width.title", column.title)) {
+            Button(L.t("columns.width.narrow")) {
+                viewModel.setColumnWidth(column == .fileExtension ? 48 : 62, column: column, for: panel.side)
+            }
+            Button(L.t("columns.width.normal")) {
+                viewModel.setColumnWidth(column == .fileExtension ? 72 : 86, column: column, for: panel.side)
+            }
+            Button(L.t("columns.width.wide")) {
+                viewModel.setColumnWidth(column == .fileExtension ? 110 : 125, column: column, for: panel.side)
+            }
+        }
     }
 
     private var searchField: some View {

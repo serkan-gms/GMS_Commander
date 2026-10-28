@@ -13,6 +13,8 @@ struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @EnvironmentObject private var theme: ThemeManager
     @State private var keyboardConflict: String?
+    /// Son algılanan girdi olayı (fare geri tuşu tanılaması).
+    @AppStorage(InputDiagnostics.defaultsKey) private var lastInputEvent = ""
 
     var body: some View {
         TabView {
@@ -59,6 +61,24 @@ struct SettingsView: View {
                 Toggle(L.t("settings.gitIntegration"), isOn: $settings.gitIntegrationEnabled)
             }
 
+            Section(L.t("settings.section.mouse")) {
+                Toggle(
+                    L.t("settings.mouseBackButton"),
+                    isOn: $settings.mouseBackButtonEnabled
+                )
+                Text(L.t("settings.mouseBackButton.help"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(
+                    L.t(
+                        "settings.mouseBackButton.detected",
+                        lastInputEvent.isEmpty ? "—" : lastInputEvent
+                    )
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             Section(L.t("settings.section.startup")) {
                 pathRow(
                     title: L.t("settings.leftPanelPath"),
@@ -101,6 +121,32 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            Section(L.t("settings.section.additionalShortcuts")) {
+                Text(L.t("settings.additionalShortcuts.help"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(KeyboardShortcutManager.AdditionalShortcutAction.allCases) { action in
+                    HStack {
+                        Text(action.title)
+                        Spacer()
+                        Picker("", selection: additionalShortcutBinding(for: action)) {
+                            ForEach(KeyboardShortcutManager.AdditionalShortcutKey.allCases) { key in
+                                Text(key.label).tag(key)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 120)
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button(L.t("settings.keyboard.reset")) {
+                        settings.resetAdditionalShortcutBindings()
+                        keyboardConflict = nil
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()
@@ -126,6 +172,26 @@ struct SettingsView: View {
         )
     }
 
+    /// Değiştirilebilir macOS kısayolu için çakışma denetimli bağlama.
+    private func additionalShortcutBinding(
+        for action: KeyboardShortcutManager.AdditionalShortcutAction
+    ) -> Binding<KeyboardShortcutManager.AdditionalShortcutKey> {
+        Binding(
+            get: { settings.additionalKeyBindings.key(for: action) },
+            set: { newKey in
+                if let conflict = settings.setAdditionalShortcut(newKey, for: action) {
+                    keyboardConflict = L.t(
+                        "settings.keyboard.conflict",
+                        newKey.label,
+                        conflict.title
+                    )
+                } else {
+                    keyboardConflict = nil
+                }
+            }
+        )
+    }
+
     private var aboutTab: some View {
         VStack(spacing: 10) {
             Image(systemName: "folder.badge.gearshape")
@@ -134,6 +200,9 @@ struct SettingsView: View {
             Text(AppInfo.name)
                 .font(.title3.weight(.semibold))
             Text(L.t("settings.version", AppInfo.version, AppInfo.build))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Text(L.t("settings.about.author", AppInfo.author))
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Text(L.t("settings.about.description"))
@@ -187,6 +256,12 @@ struct SettingsView: View {
                 Toggle(L.t("settings.singlePanelMode"), isOn: $settings.singlePanelMode)
                 Toggle(L.t("settings.verticalSplit"), isOn: $settings.verticalSplit)
                 Toggle(L.t("settings.restoreTabs"), isOn: $settings.restoreTabsOnLaunch)
+                Picker(L.t("theme.fontStyle"), selection: $theme.fontStyle) {
+                    ForEach(InterfaceFontStyle.allCases) { style in
+                        Text(style.localizedName).tag(style)
+                    }
+                }
+                .pickerStyle(.menu)
                 HStack {
                     Text(L.t("theme.fontSize"))
                     Slider(value: $theme.fontSize, in: ThemeManager.fontSizeRange, step: 1)
@@ -195,7 +270,7 @@ struct SettingsView: View {
                         .frame(width: 24, alignment: .trailing)
                 }
                 Text(L.t("theme.fontSize.sample"))
-                    .font(.system(size: theme.fontSize, design: .monospaced))
+                    .font(Theme.mono(size: theme.fontSize))
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.vertical, 4)
             }
@@ -205,6 +280,7 @@ struct SettingsView: View {
                 Button(L.t("theme.reset")) {
                     theme.themeID = .voidCommander
                     theme.resetFontSize()
+                    theme.resetFontStyle()
                     theme.functionKeyFontSize = 13
                     theme.functionKeyButtonScale = 1
                 }

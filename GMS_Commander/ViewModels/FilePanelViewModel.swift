@@ -324,6 +324,9 @@ final class FilePanelViewModel: ObservableObject, Identifiable {
     /// Üst klasöre çıkar.
     func goUp() {
         guard canGoUp else { return }
+        // Üst klasör açıldığında ayrıldığımız alt klasörü seç. Böylece `..`
+        // satırına Enter ile çıkan kullanıcı klavyeyle kaldığı yerden devam eder.
+        pendingRevealURL = currentDirectory.standardizedFileURL
         navigate(to: currentDirectory.deletingLastPathComponent())
     }
 
