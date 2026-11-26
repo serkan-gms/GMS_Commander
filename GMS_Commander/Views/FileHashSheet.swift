@@ -209,7 +209,7 @@ struct FileHashSheet: View {
 
     private func exportResults() {
         let panel = NSSavePanel()
-        panel.title = L.t("hash.exportTitle")
+        panel.title = "\(L.t("app.name")) — \(L.t("hash.exportTitle"))"
         panel.nameFieldStringValue = L.t("hash.exportFileName")
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.canCreateDirectories = true

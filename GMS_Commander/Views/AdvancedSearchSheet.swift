@@ -633,7 +633,7 @@ struct AdvancedSearchSheet: View {
     /// Sonuçları CSV olarak dışa aktarır.
     private func exportResults() {
         let panel = NSSavePanel()
-        panel.title = L.t("search.export")
+        panel.title = "\(L.t("app.name")) — \(L.t("search.export"))"
         panel.nameFieldStringValue = L.t("search.exportFileName")
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.canCreateDirectories = true

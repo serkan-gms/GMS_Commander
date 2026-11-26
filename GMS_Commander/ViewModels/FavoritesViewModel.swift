@@ -8,6 +8,44 @@
 
 import Foundation
 import Combine
+import AppKit
+
+struct VolumeDeviceInfo: Sendable {
+    let isVolume: Bool
+    let isLocal: Bool?
+    let isInternal: Bool?
+    let isRemovable: Bool?
+    let isEjectable: Bool?
+
+    var isExternal: Bool {
+        guard isVolume, isLocal == true, isInternal != true else { return false }
+        return isInternal == false || isRemovable == true || isEjectable == true
+    }
+
+    static func read(from url: URL) throws -> VolumeDeviceInfo {
+        let values = try url.resourceValues(forKeys: [
+            .isVolumeKey, .volumeIsLocalKey, .volumeIsInternalKey,
+            .volumeIsRemovableKey, .volumeIsEjectableKey
+        ])
+        return VolumeDeviceInfo(
+            isVolume: values.isVolume == true,
+            isLocal: values.volumeIsLocal,
+            isInternal: values.volumeIsInternal,
+            isRemovable: values.volumeIsRemovable,
+            isEjectable: values.volumeIsEjectable
+        )
+    }
+}
+
+struct VolumeService: Sendable {
+    let info: @Sendable (URL) throws -> VolumeDeviceInfo
+    let eject: @Sendable (URL) throws -> Void
+
+    static let system = VolumeService(
+        info: { try VolumeDeviceInfo.read(from: $0) },
+        eject: { try NSWorkspace.shared.unmountAndEjectDevice(at: $0) }
+    )
+}
 
 /// Sık kullanılan klasör listesi.
 final class FavoritesViewModel: ObservableObject {
@@ -23,6 +61,10 @@ final class FavoritesViewModel: ObservableObject {
 
     private let defaults: UserDefaults
     private let includeMountedVolumes: Bool
+
+    /// Birim ekleme/çıkarım bildirimlerini takip eder; window'a özeldir ve
+    /// tek bir kez kaydedilir.
+    private var volumeMonitorObservers: [NSObjectProtocol] = []
 
     /// Sıralı kayıt listesi.
     @Published private(set) var items: [FavoriteFolder] = []
@@ -111,9 +153,63 @@ final class FavoritesViewModel: ObservableObject {
     }
 
     private func addMountedVolumesIfNeeded() {
-        guard includeMountedVolumes, !defaults.bool(forKey: Keys.mountedVolumesSeeded) else { return }
+        guard includeMountedVolumes, !defaults.bool(forKey: Keys.mountedVolumesSeeded) else {
+            // İlk yüklemeden sonra birim izlemesini etkinleştir; değişimler
+            // (takma/cıkarma) ve uygulama etkinleştirmede yeniden denetlenir.
+            startVolumeMonitoring()
+            return
+        }
         refreshMountedVolumes()
         defaults.set(true, forKey: Keys.mountedVolumesSeeded)
+        startVolumeMonitoring()
+    }
+
+    /// Disk ve diğer birim değişikliklerini (takma, çıkarma) izler; USB bellek
+    /// gibi yeni takılan birimler Diskler bölümünde otomatik görünür.
+    private func startVolumeMonitoring() {
+        guard includeMountedVolumes, volumeMonitorObservers.isEmpty else { return }
+
+        let center = NSWorkspace.shared.notificationCenter
+        volumeMonitorObservers.append(
+            center.addObserver(
+                forName: NSWorkspace.didMountNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.refreshMountedVolumes()
+            }
+        )
+        volumeMonitorObservers.append(
+            center.addObserver(
+                forName: NSWorkspace.didUnmountNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.refreshMountedVolumes()
+            }
+        )
+        // Uygulama yeniden etkinleştirildiğinde de birimleri tamamlara çok
+        // yakın denetle (bilgiler biraz gecikebilir).
+        volumeMonitorObservers.append(
+            center.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.refreshMountedVolumes()
+            }
+        )
+    }
+
+    public func stopVolumeMonitoring() {
+        for observer in volumeMonitorObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        volumeMonitorObservers.removeAll()
+    }
+
+    deinit {
+        stopVolumeMonitoring()
     }
 
     /// Diskler bölümünü o anda bağlı olan birimlerle eşitler.

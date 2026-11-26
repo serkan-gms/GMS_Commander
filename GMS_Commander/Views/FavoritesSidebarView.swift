@@ -51,6 +51,7 @@ struct FavoritesSidebarView: View {
         .background(NativeSidebarBackground())
         .sheet(isPresented: $isEditingGroups) {
             FavoriteGroupEditor(favorites: favorites)
+                .commanderWindowBranding()
         }
         .sheet(item: $favoriteToRename) { favorite in
             VStack(alignment: .leading, spacing: 12) {
@@ -67,6 +68,7 @@ struct FavoritesSidebarView: View {
             }
             .padding(20)
             .frame(width: 360)
+            .commanderWindowBranding()
         }
     }
 
@@ -81,29 +83,15 @@ struct FavoritesSidebarView: View {
 
             Spacer(minLength: 2)
 
-            Menu {
-                ForEach(favorites.groups) { group in
-                    Menu(group.name) {
-                        // Bölümün kayıt türüne uymayan eklemeler devre dışı bırakılır.
-                        Button(L.t("favorites.addCurrent")) {
-                            addCurrentDirectory(to: group)
-                        }
-                        .disabled(!favorites.canAdd(url: viewModel.activePanel.currentDirectory, to: group.id))
-
-                        Button(L.t("favorites.addSelected", viewModel.activePanel.selection.count)) {
-                            addSelection(to: group)
-                        }
-                        .disabled(!canAddSelection(to: group))
-                    }
-                }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(SidebarPalette.secondaryText)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .help(L.t("favorites.add"))
+            FavoritesAddMenu(
+                groups: favorites.groups,
+                selectionCount: viewModel.activePanel.selection.count,
+                canAddCurrent: { favorites.canAdd(url: viewModel.activePanel.currentDirectory, to: $0.id) },
+                canAddSelection: canAddSelection,
+                addCurrent: addCurrentDirectory,
+                addSelection: addSelection
+            )
+            .frame(width: 16, height: 18)
 
             Button {
                 isEditingGroups = true
@@ -206,42 +194,72 @@ struct FavoritesSidebarView: View {
         let isCurrent = item.isDirectory
             && item.path == viewModel.activePanel.currentDirectory.standardizedFileURL.path
         let isSelected = item.id == selectedID
+        let isExternal = groupRole == .disks && viewModel.isExternalVolume(item.url)
 
-        return Button {
-            selectedID = item.id
-            let targetSide = viewModel.activeSide
-            viewModel.activate(side: targetSide)
-            viewModel.openFavorite(item, side: targetSide)
-        } label: {
-            HStack(spacing: 6) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: item.path))
-                    .resizable()
-                    .frame(width: 15, height: 15)
+        return HStack(spacing: 4) {
+            Button {
+                selectedID = item.id
+                let targetSide = viewModel.activeSide
+                viewModel.activate(side: targetSide)
+                viewModel.openFavorite(item, side: targetSide)
+            } label: {
+                HStack(spacing: 6) {
+                    if isExternal {
+                        Image(systemName: "externaldrive.fill")
+                            .resizable()
+                            .scaledToFit()
+                            .foregroundStyle(SidebarPalette.accent)
+                            .frame(width: 15, height: 15)
+                    } else {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: item.path))
+                            .resizable()
+                            .frame(width: 15, height: 15)
+                    }
 
-                Text(item.name)
-                    .font(.system(size: Appearance.keyFontSize, weight: isCurrent ? .semibold : .regular))
-                    .foregroundStyle(isCurrent ? SidebarPalette.primaryText : SidebarPalette.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    Text(item.name)
+                        .font(.system(size: Appearance.keyFontSize, weight: isCurrent ? .semibold : .regular))
+                        .foregroundStyle(isCurrent ? SidebarPalette.primaryText : SidebarPalette.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 
-                Spacer(minLength: 0)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(isSelected
-                        ? SidebarPalette.selection
-                        : (hoveredID == item.id ? SidebarPalette.hover : Color.clear))
-            )
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help(item.path)
+
+            if isExternal {
+                Button {
+                    viewModel.ejectVolume(item)
+                } label: {
+                    if viewModel.ejectingVolumePath == item.path {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "eject")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(SidebarPalette.secondaryText)
+                .disabled(viewModel.isOperating)
+                .help(L.t("favorites.ejectHelp", item.name))
+                .accessibilityLabel(L.t("favorites.ejectHelp", item.name))
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(isSelected
+                    ? SidebarPalette.selection
+                    : (hoveredID == item.id ? SidebarPalette.hover : Color.clear))
+        )
         .onHover { hovering in
             hoveredID = hovering ? item.id : (hoveredID == item.id ? nil : hoveredID)
         }
-        .help(item.path)
         .contextMenu {
             if item.isDirectory && !item.isApplication {
                 Button(L.t("favorites.openActive")) { viewModel.openFavorite(item) }
@@ -327,6 +345,92 @@ struct FavoritesSidebarView: View {
         }
 
         func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+    }
+
+    struct FavoritesAddMenu: NSViewRepresentable {
+        let groups: [FavoriteGroup]
+        let selectionCount: Int
+        let canAddCurrent: (FavoriteGroup) -> Bool
+        let canAddSelection: (FavoriteGroup) -> Bool
+        let addCurrent: (FavoriteGroup) -> Void
+        let addSelection: (FavoriteGroup) -> Void
+
+        func makeCoordinator() -> Coordinator {
+            Coordinator(self)
+        }
+
+        func makeNSView(context: Context) -> NSButton {
+            let button = NSButton()
+            button.isBordered = false
+            button.image = NSImage(
+                systemSymbolName: "chevron.down",
+                accessibilityDescription: L.t("favorites.add")
+            )?.withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+            button.contentTintColor = .secondaryLabelColor
+            button.toolTip = L.t("favorites.add")
+            button.setAccessibilityLabel(L.t("favorites.add"))
+            button.target = context.coordinator
+            button.action = #selector(Coordinator.showMenu(_:))
+            return button
+        }
+
+        func updateNSView(_ button: NSButton, context: Context) {
+            context.coordinator.parent = self
+        }
+
+        final class Coordinator: NSObject {
+            var parent: FavoritesAddMenu
+
+            init(_ parent: FavoritesAddMenu) {
+                self.parent = parent
+            }
+
+            @objc func showMenu(_ button: NSButton) {
+                makeMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: 0), in: button)
+            }
+
+            func makeMenu() -> NSMenu {
+                let menu = NSMenu()
+                menu.autoenablesItems = false
+                for group in parent.groups {
+                    let groupItem = NSMenuItem(title: group.name, action: nil, keyEquivalent: "")
+                    let submenu = NSMenu(title: group.name)
+                    submenu.autoenablesItems = false
+                    let current = NSMenuItem(
+                        title: L.t("favorites.addCurrent"),
+                        action: #selector(addCurrent(_:)),
+                        keyEquivalent: ""
+                    )
+                    current.target = self
+                    current.representedObject = group
+                    current.isEnabled = parent.canAddCurrent(group)
+                    submenu.addItem(current)
+
+                    let selection = NSMenuItem(
+                        title: L.t("favorites.addSelected", parent.selectionCount),
+                        action: #selector(addSelection(_:)),
+                        keyEquivalent: ""
+                    )
+                    selection.target = self
+                    selection.representedObject = group
+                    selection.isEnabled = parent.canAddSelection(group)
+                    submenu.addItem(selection)
+                    groupItem.submenu = submenu
+                    menu.addItem(groupItem)
+                }
+                return menu
+            }
+
+            @objc private func addCurrent(_ item: NSMenuItem) {
+                guard let group = item.representedObject as? FavoriteGroup else { return }
+                parent.addCurrent(group)
+            }
+
+            @objc private func addSelection(_ item: NSMenuItem) {
+                guard let group = item.representedObject as? FavoriteGroup else { return }
+                parent.addSelection(group)
+            }
+        }
     }
 
     /// Seçili öğelerin tamamı bölümün kayıt türüne uyuyor mu?

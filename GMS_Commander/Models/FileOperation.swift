@@ -45,6 +45,9 @@ struct OperationProgress: Equatable, Sendable {
     /// Toplam bayt miktarı (0 ise yüzde bilinmiyor demektir).
     var totalBytes: Int64
 
+    /// Aktarım öncesinde kaynak boyutları hesaplanıyor.
+    var isPreparing: Bool = false
+
     /// 0...1 arasında ilerleme oranı; toplam boyut bilinmiyorsa öğe sayısına göre hesaplanır.
     var fraction: Double {
         if totalBytes > 0 {

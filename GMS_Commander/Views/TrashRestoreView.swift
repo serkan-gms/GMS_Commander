@@ -116,7 +116,7 @@ struct TrashRestoreView: View {
         .background(Theme.panel)
         .task { await model.load() }
         .confirmationDialog(
-            L.t("trash.emptyConfirmTitle"),
+            "\(L.t("app.name")) — \(L.t("trash.emptyConfirmTitle"))",
             isPresented: $model.isConfirmingEmpty,
             titleVisibility: .visible
         ) {

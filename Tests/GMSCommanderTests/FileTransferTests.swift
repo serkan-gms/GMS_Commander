@@ -85,7 +85,7 @@ final class FileTransferTests: XCTestCase {
         let recorder = Recorder()
 
         try FileCopyService.copySync(source: source, to: destination, overwrite: false) { bytes in
-            recorder.total += bytes
+            recorder.total = bytes
         }
 
         XCTAssertGreaterThan(recorder.total, 0)
@@ -94,7 +94,7 @@ final class FileTransferTests: XCTestCase {
 
     func testEstimateCountsBytesAndItems() throws {
         let fileURL = try TestSupport.writeFile(named: "a.txt", contents: "12345", in: directory)
-        let estimate = FileCopyService.estimateSync(fileURL)
+        let estimate = try FileCopyService.estimateSync(fileURL)
 
         XCTAssertEqual(estimate.bytes, 5)
         XCTAssertEqual(estimate.itemCount, 1)

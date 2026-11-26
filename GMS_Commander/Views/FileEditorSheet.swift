@@ -136,7 +136,7 @@ struct FileEditorSheet: View {
         .interactiveDismissDisabled(model.hasUnsavedChanges)
         .onDisappear { model.searchController.clearSearch() }
         .confirmationDialog(
-            L.t("editor.unsavedTitle"),
+            "\(L.t("app.name")) — \(L.t("editor.unsavedTitle"))",
             isPresented: $isConfirmingClose,
             titleVisibility: .visible
         ) {
@@ -153,7 +153,7 @@ struct FileEditorSheet: View {
             Text(L.t("editor.unsavedMessage"))
         }
         .alert(
-            L.t("editor.fileChangedTitle"),
+            "\(L.t("app.name")) — \(L.t("editor.fileChangedTitle"))",
             isPresented: $model.isConfirmingOverwrite
         ) {
             Button(L.t("editor.overwriteAnyway"), role: .destructive) {

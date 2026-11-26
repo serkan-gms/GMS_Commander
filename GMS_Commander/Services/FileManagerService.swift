@@ -8,6 +8,21 @@
 //
 
 import Foundation
+import Darwin
+
+enum NewFileType: String, CaseIterable, Identifiable, Sendable {
+    case text = "txt"
+    case markdown = "md"
+
+    var id: String { rawValue }
+
+    var localizedTitle: String {
+        switch self {
+        case .text: return L.t("newFile.type.text")
+        case .markdown: return L.t("newFile.type.markdown")
+        }
+    }
+}
 
 /// Dosya sistemi işlemlerini sağlayan servis.
 struct FileManagerService: Sendable {
@@ -101,7 +116,36 @@ struct FileManagerService: Sendable {
         )
     }
 
-    // MARK: - Klasör oluşturma ve yeniden adlandırma
+    // MARK: - Dosya ve klasör oluşturma, yeniden adlandırma
+
+    func createFile(in directory: URL, name: String, type: NewFileType) async throws -> URL {
+        try await Task.detached(priority: .userInitiated) {
+            try Self.createFileSync(in: directory, name: name, type: type)
+        }.value
+    }
+
+    static func createFileSync(in directory: URL, name: String, type: NewFileType) throws -> URL {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        try validateName(trimmedName)
+        let finalName = (trimmedName as NSString).pathExtension.lowercased() == type.rawValue
+            ? trimmedName : "\(trimmedName).\(type.rawValue)"
+        let url = directory.appendingPathComponent(finalName, isDirectory: false)
+
+        let descriptor = url.path.withCString { path in
+            open(path, O_WRONLY | O_CREAT | O_EXCL, 0o666)
+        }
+        guard descriptor >= 0 else {
+            let code = errno
+            if code == EEXIST {
+                throw FileOperationError.destinationExists(url)
+            }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        guard close(descriptor) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        return url
+    }
 
     /// Klasör içinde çakışmayan yeni bir klasör adı üretir ("Yeni Klasör", "Yeni Klasör 2", ...).
     /// - Parameters:

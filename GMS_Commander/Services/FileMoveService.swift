@@ -83,11 +83,12 @@ struct FileMoveService: Sendable {
 
             // İki klasör: hedefi silmek yerine içerikleri birleştir.
             if sourceIsDirectory && destinationIsDirectory {
+                let reporter = MoveProgressReporter(onProgress: progress)
                 try mergeMoveDirectory(
                     source: source,
                     destination: destination,
                     control: control,
-                    progress: progress
+                    reporter: reporter
                 )
                 return
             }
@@ -111,6 +112,8 @@ struct FileMoveService: Sendable {
             try atomicMove(from: source, to: destination)
             // Taşıma sonrası kaynak artık yok; boyut daha önce okunmuştu.
             progress(sourceIsDirectory ? 0 : sourceFileSize)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             if isCrossDevice(error) {
                 try moveByCopying(
@@ -134,7 +137,7 @@ struct FileMoveService: Sendable {
         source: URL,
         destination: URL,
         control: TransferControl?,
-        progress: @escaping @Sendable (Int64) -> Void
+        reporter: MoveProgressReporter
     ) throws {
         let fileManager = FileManager.default
         let children: [URL]
@@ -155,7 +158,6 @@ struct FileMoveService: Sendable {
             let childDestination = destination.appendingPathComponent(child.lastPathComponent)
             let childValues = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey])
             let childIsDirectory = (childValues?.isDirectory ?? false) && childValues?.isSymbolicLink != true
-
             let childDestinationExists = fileManager.fileExists(atPath: childDestination.path)
             let childDestinationValues = childDestinationExists
                 ? try? childDestination.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
@@ -163,16 +165,21 @@ struct FileMoveService: Sendable {
             let childDestinationIsDirectory = (childDestinationValues?.isDirectory ?? false)
                 && childDestinationValues?.isSymbolicLink != true
 
+            if childDestinationExists && childIsDirectory && childDestinationIsDirectory {
+                try mergeMoveDirectory(
+                    source: child,
+                    destination: childDestination,
+                    control: control,
+                    reporter: reporter
+                )
+                continue
+            }
+
+            let childBytes = childIsDirectory
+                ? try FileCopyService.estimateSync(child, control: control).bytes
+                : (childValues?.isSymbolicLink == true ? 0 : Int64(childValues?.fileSize ?? 0))
+
             if childDestinationExists {
-                if childIsDirectory && childDestinationIsDirectory {
-                    try mergeMoveDirectory(
-                        source: child,
-                        destination: childDestination,
-                        control: control,
-                        progress: progress
-                    )
-                    continue
-                }
                 if !childIsDirectory && childDestinationIsDirectory {
                     // Dosyanın üzerine klasör yazmak hedef klasörü silmek olur.
                     throw FileOperationError.destinationIsDirectory(childDestination)
@@ -183,16 +190,17 @@ struct FileMoveService: Sendable {
                 }
             }
 
+            let baseBytes = reporter.completedBytes
             do {
                 try atomicMove(from: child, to: childDestination)
-                progress(Int64(childValues?.fileSize ?? 0))
+                reporter.report(baseBytes + childBytes)
             } catch {
                 if isCrossDevice(error) {
                     try moveByCopying(
                         source: child,
                         to: childDestination,
                         control: control,
-                        progress: progress
+                        progress: { bytes in reporter.report(baseBytes + bytes) }
                     )
                 } else {
                     throw FileOperationError.moveFailed(child, ErrorMessages.message(for: error))
@@ -228,6 +236,8 @@ struct FileMoveService: Sendable {
                 control: control,
                 progress: progress
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw FileOperationError.moveFailed(source, ErrorMessages.message(for: error))
         }
@@ -237,6 +247,9 @@ struct FileMoveService: Sendable {
         guard FileManager.default.fileExists(atPath: destination.path) else {
             throw FileOperationError.verificationFailed(source, destination)
         }
+
+        try control?.checkCancellation()
+        try Task.checkCancellation()
 
         do {
             try FileManager.default.removeItem(at: source)
@@ -295,5 +308,28 @@ struct FileMoveService: Sendable {
             depth += 1
         }
         return false
+    }
+}
+
+private final class MoveProgressReporter: @unchecked Sendable {
+    private let lock = NSLock()
+    private let onProgress: @Sendable (Int64) -> Void
+    private var bytes: Int64 = 0
+
+    init(onProgress: @escaping @Sendable (Int64) -> Void) {
+        self.onProgress = onProgress
+    }
+
+    var completedBytes: Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return bytes
+    }
+
+    func report(_ value: Int64) {
+        lock.lock()
+        bytes = value
+        lock.unlock()
+        onProgress(value)
     }
 }

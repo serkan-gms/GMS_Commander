@@ -10,6 +10,22 @@
 import SwiftUI
 import AppKit
 
+extension View {
+    func commanderWindowBranding() -> some View {
+        safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                Text(L.t("app.name"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                Divider()
+            }
+        }
+    }
+}
+
 /// Bağlandığı pencerede tek seferlik yapılandırma çalıştırır.
 struct WindowAccessor: NSViewRepresentable {
     /// Pencere bulunduğunda çalıştırılacak kapanış.

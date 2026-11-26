@@ -523,7 +523,7 @@ struct FolderCompareSheet: View {
 
     private func exportResults() {
         let panel = NSSavePanel()
-        panel.title = L.t("compare.exportTitle")
+        panel.title = "\(L.t("app.name")) — \(L.t("compare.exportTitle"))"
         panel.nameFieldStringValue = L.t("compare.exportFileName")
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.canCreateDirectories = true

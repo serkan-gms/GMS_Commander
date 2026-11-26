@@ -308,6 +308,7 @@ struct SettingsView: View {
 
     private func chooseDirectory(completion: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()
+        panel.title = L.t("app.name")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false

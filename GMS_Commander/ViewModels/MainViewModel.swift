@@ -109,6 +109,19 @@ struct RenameRequest: Identifiable {
     var suggestedName: String
 }
 
+/// Yeni klasör oluşturma isteği.
+struct NewFolderRequest: Identifiable {
+    let id = UUID()
+    /// Kullanıcının girdiği / onaylanacak klasör adı.
+    let preferredName: String
+}
+
+struct NewFileRequest: Identifiable {
+    let id = UUID()
+    let directory: URL
+    let side: PanelSide
+}
+
 /// Görüntüleyici/düzenleyici isteği.
 struct FilePresentationRequest: Identifiable {
     let id = UUID()
@@ -194,6 +207,8 @@ final class MainViewModel: ObservableObject {
     /// İşlem sürüyor mu?
     @Published private(set) var isOperating = false
 
+    @Published private(set) var ejectingVolumePath: String?
+
     /// Süren aktarım duraklatıldı mı?
     @Published private(set) var isOperationPaused = false
 
@@ -256,6 +271,10 @@ final class MainViewModel: ObservableObject {
     /// Açık dosya düzenleyici (F4).
     @Published var editorFile: FilePresentationRequest?
 
+    /// Yeni klasör oluşturma isteği (F7 / Araç çubuğu).
+    @Published var newFolderRequest: NewFolderRequest?
+    @Published var newFileRequest: NewFileRequest?
+
     /// Arama alanına odaklanması istenen panel.
     @Published var searchFocusSide: PanelSide?
 
@@ -267,7 +286,7 @@ final class MainViewModel: ObservableObject {
             || deletionRequest != nil || transferConfirmation != nil || alert != nil
             || archiveBrowser != nil || isShowingTrashRestore
             || batchRenameRequest != nil
-            || viewerFile != nil || editorFile != nil
+            || viewerFile != nil || editorFile != nil || newFolderRequest != nil || newFileRequest != nil
     }
 
     // MARK: - Gizli durum
@@ -276,12 +295,14 @@ final class MainViewModel: ObservableObject {
     private let copyService = FileCopyService()
     private let moveService = FileMoveService()
     private let zipArchiveService = ZipArchiveService()
+    private let volumeService: VolumeService
 
     private var operationTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
     /// Süren aktarımın duraklatma/iptal denetimi.
     private var transferControl: TransferControl?
+    private var progressUpdateID: UUID?
     /// Sırayla yürütülecek aktarımlar.
     private var pendingTransfers: [QueuedTransfer] = []
     /// Hız hesabı için son örnek zamanı ve bayt değeri.
@@ -294,9 +315,14 @@ final class MainViewModel: ObservableObject {
 
     // MARK: - Başlatma
 
-    init(settings: SettingsStore, favorites: FavoritesViewModel = .shared) {
+    init(
+        settings: SettingsStore,
+        favorites: FavoritesViewModel = .shared,
+        volumeService: VolumeService = .system
+    ) {
         self.settings = settings
         self.favorites = favorites
+        self.volumeService = volumeService
         self.leftPanel = FilePanelViewModel(side: .left, settings: settings)
         self.rightPanel = FilePanelViewModel(side: .right, settings: settings)
 
@@ -700,6 +726,60 @@ final class MainViewModel: ObservableObject {
 
     // MARK: - Sık kullanılanlar
 
+    func isExternalVolume(_ url: URL) -> Bool {
+        url.standardizedFileURL.path != "/" && (try? volumeService.info(url).isExternal) == true
+    }
+
+    func ejectVolume(_ item: FavoriteFolder) {
+        guard !isOperating else {
+            alert = UserFacingAlert(title: L.t("error.title.busy"), message: L.t("favorites.ejectBusy"))
+            return
+        }
+        do {
+            guard item.url.standardizedFileURL.path != "/",
+                  try volumeService.info(item.url).isExternal else {
+                alert = UserFacingAlert(
+                    title: L.t("favorites.ejectFailedTitle"),
+                    message: L.t("favorites.ejectUnavailable", item.name)
+                )
+                return
+            }
+        } catch {
+            alert = UserFacingAlert(
+                title: L.t("favorites.ejectFailedTitle"),
+                message: L.t("favorites.ejectFailed", item.name, ErrorMessages.message(for: error))
+            )
+            return
+        }
+
+        isOperating = true
+        ejectingVolumePath = item.path
+        let service = volumeService
+        let volumeURL = item.url
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try service.eject(volumeURL)
+                }.value
+                self.favorites.refreshMountedVolumes()
+                for panel in [self.leftPanel, self.rightPanel] {
+                    if FileManagerService.isSameLocation(panel.currentDirectory, volumeURL)
+                        || FileManagerService.isDescendant(panel.currentDirectory, of: volumeURL) {
+                        panel.goHome()
+                    }
+                }
+            } catch {
+                self.alert = UserFacingAlert(
+                    title: L.t("favorites.ejectFailedTitle"),
+                    message: L.t("favorites.ejectFailed", item.name, ErrorMessages.message(for: error))
+                )
+            }
+            self.ejectingVolumePath = nil
+            self.finishTransferAndStartNext()
+        }
+    }
+
     /// Sık kullanılan klasörü panele uygular.
     /// - Parameters:
     ///   - item: Açılacak klasör.
@@ -758,7 +838,7 @@ final class MainViewModel: ObservableObject {
         }
 
         let savePanel = NSSavePanel()
-        savePanel.title = L.t("archive.title")
+        savePanel.title = "\(L.t("app.name")) — \(L.t("archive.title"))"
         savePanel.nameFieldStringValue = "\(sources[0].lastPathComponent)\(sources.count > 1 ? "-\(sources.count)" : "").zip"
         savePanel.directoryURL = activePanel.currentDirectory
         // ZIP varsayılandır; kullanıcı adı ".tar" veya ".tar.gz" olarak
@@ -891,7 +971,7 @@ final class MainViewModel: ObservableObject {
         guard !urls.isEmpty else { return }
 
         let panel = NSOpenPanel()
-        panel.title = L.t("openWith.title")
+        panel.title = "\(L.t("app.name")) — \(L.t("openWith.title"))"
         panel.prompt = L.t("openWith.prompt")
         panel.message = L.t("openWith.message")
         panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
@@ -1143,33 +1223,46 @@ final class MainViewModel: ObservableObject {
         let kind = mode.operationKind
         applyToAllConflictDecision = nil
 
+        var progress = OperationProgress(
+            kind: kind,
+            currentItemName: sources.first?.lastPathComponent ?? "",
+            completedItems: 0,
+            totalItems: sources.count,
+            completedBytes: 0,
+            totalBytes: 0,
+            isPreparing: true
+        )
+        operationProgress = progress
+
         // Boyut tahmini ilerleme çubuğunun toplamını belirler.
         var perSourceBytes: [URL: Int64] = [:]
         var totalBytes: Int64 = 0
-        var totalItems = 0
-        for source in sources {
-            let estimate = await copyService.estimate(source: source)
-            perSourceBytes[source] = estimate.bytes
-            totalBytes += estimate.bytes
-            totalItems += max(estimate.itemCount, 1)
+        var wasCancelled = false
+        do {
+            for source in sources {
+                progress.currentItemName = source.lastPathComponent
+                operationProgress = progress
+                let estimate = try await copyService.estimate(source: source, control: control)
+                perSourceBytes[source] = estimate.bytes
+                totalBytes += estimate.bytes
+            }
+        } catch is CancellationError {
+            wasCancelled = true
+        } catch {
+            alert = UserFacingAlert(title: L.t("operation.failedTitle"), message: ErrorMessages.message(for: error))
+            operationProgress = nil
+            finishTransferAndStartNext()
+            return
         }
-
-        var progress = OperationProgress(
-            kind: kind,
-            currentItemName: "",
-            completedItems: 0,
-            totalItems: totalItems,
-            completedBytes: 0,
-            totalBytes: totalBytes
-        )
+        progress.totalBytes = totalBytes
+        progress.isPreparing = false
         operationProgress = progress
 
         var failures: [FileOperationFailure] = []
         var completedCount = 0
-        var wasCancelled = false
 
         for source in sources {
-            if Task.isCancelled {
+            if wasCancelled || Task.isCancelled || control.isCancelled {
                 wasCancelled = true
                 break
             }
@@ -1237,9 +1330,12 @@ final class MainViewModel: ObservableObject {
 
             let baseBytes = progress.completedBytes
             let sourceName = source.lastPathComponent
+            let updateID = UUID()
+            progressUpdateID = updateID
             let progressHandler: @Sendable (Int64) -> Void = { [weak self] bytes in
                 Task { @MainActor in
-                    self?.updateProgress(completedBytes: baseBytes + bytes, currentItemName: sourceName)
+                    guard let self, self.transferControl === control, self.progressUpdateID == updateID else { return }
+                    self.updateProgress(completedBytes: baseBytes + bytes, currentItemName: sourceName)
                 }
             }
 
@@ -1263,19 +1359,23 @@ final class MainViewModel: ObservableObject {
                     )
                 }
 
+                progressUpdateID = nil
                 completedCount += 1
                 progress.completedBytes = baseBytes + (perSourceBytes[source] ?? 0)
                 progress.completedItems = completedCount
                 operationProgress = progress
             } catch is CancellationError {
+                progressUpdateID = nil
                 wasCancelled = true
                 break
             } catch {
+                progressUpdateID = nil
                 failures.append(ErrorMessages.failure(for: source, error: error))
             }
         }
 
         operationProgress = nil
+        progressUpdateID = nil
         transferBytesPerSecond = 0
         isOperationPaused = false
 
@@ -1458,6 +1558,37 @@ final class MainViewModel: ObservableObject {
 
     // MARK: - Oluşturma ve yeniden adlandırma
 
+    func openNewFileDialog() {
+        newFileRequest = NewFileRequest(directory: activePanel.currentDirectory, side: activeSide)
+    }
+
+    func createNewFile(named name: String, type: NewFileType, request: NewFileRequest) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let newURL = try await self.fileManagerService.createFile(
+                    in: request.directory, name: name, type: type
+                )
+                let targetPanel = self.panel(for: request.side)
+                if FileManagerService.isSameLocation(targetPanel.currentDirectory, request.directory) {
+                    await targetPanel.reload(preserveSelection: false)
+                    if FileManagerService.isSameLocation(targetPanel.currentDirectory, request.directory) {
+                        targetPanel.select(newURL)
+                    }
+                }
+                let otherPanel = request.side == .left ? self.rightPanel : self.leftPanel
+                if FileManagerService.isSameLocation(otherPanel.currentDirectory, request.directory) {
+                    await otherPanel.reload(preserveSelection: true)
+                }
+            } catch {
+                self.alert = UserFacingAlert(
+                    title: ErrorMessages.title(for: error),
+                    message: ErrorMessages.message(for: error)
+                )
+            }
+        }
+    }
+
     /// Etkin panelde yeni bir klasör oluşturur.
     func createNewFolder() {
         let directory = activePanel.currentDirectory
@@ -1467,6 +1598,32 @@ final class MainViewModel: ObservableObject {
                 let newURL = try await self.fileManagerService.createDirectory(
                     in: directory,
                     preferredName: L.t("newFolder.defaultName")
+                )
+                await self.activePanel.reload(preserveSelection: false)
+                self.activePanel.select(newURL)
+            } catch {
+                self.alert = UserFacingAlert(
+                    title: ErrorMessages.title(for: error),
+                    message: ErrorMessages.message(for: error)
+                )
+            }
+        }
+    }
+
+    /// Yeni klasör oluşturma penceresini açar (önce klasörün adı sorulur).
+    func openNewFolderDialog() {
+        newFolderRequest = NewFolderRequest(preferredName: L.t("newFolder.defaultName"))
+    }
+
+    /// Kullanıcıdan gelen adla yeni klasör oluşturur.
+    func createNewFolder(named name: String) {
+        let directory = activePanel.currentDirectory
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let newURL = try await self.fileManagerService.createDirectory(
+                    in: directory,
+                    preferredName: name
                 )
                 await self.activePanel.reload(preserveSelection: false)
                 self.activePanel.select(newURL)

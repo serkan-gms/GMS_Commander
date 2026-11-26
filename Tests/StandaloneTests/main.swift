@@ -199,6 +199,42 @@ func testFileManagerService() {
     let second = try? FileManagerService.createDirectorySync(in: createDir, preferredName: "Yeni Klasör")
     expectEqual(second?.lastPathComponent, "Yeni Klasör 2", "Ad çakışmasında numara ekleniyor")
 
+    let newFiles = freshDirectory("new-files")
+    do {
+        let text = try FileManagerService.createFileSync(in: newFiles, name: " Notlar ", type: .text)
+        let markdown = try FileManagerService.createFileSync(in: newFiles, name: "README.MD", type: .markdown)
+        expectEqual(text.lastPathComponent, "Notlar.txt", "Metin dosyasına uzantı ekleniyor")
+        expectEqual(markdown.lastPathComponent, "README.MD", "Mevcut uzantı tekrarlanmıyor")
+        expectEqual(try Data(contentsOf: text).count, 0, "Yeni dosya boş oluşturuluyor")
+        expectEqual(try Data(contentsOf: markdown).count, 0, "Yeni Markdown dosyası boş oluşturuluyor")
+    } catch {
+        expect(false, "Yeni dosya oluşturma: \(error)")
+    }
+    let existing = writeFile("var.txt", "korunan", in: newFiles)
+    expectError("Var olan dosya üzerine yazılmıyor", {
+        _ = try FileManagerService.createFileSync(in: newFiles, name: "var", type: .text)
+    }, matches: { if case FileOperationError.destinationExists = $0 { return true }; return false })
+    expectEqual(try? String(contentsOf: existing, encoding: .utf8), "korunan", "Var olan dosyanın içeriği korunuyor")
+    for invalid in ["", ".", "..", "alt/dosya", "ad:dosya", "a\0b"] {
+        expectError("Yeni dosya için geçersiz ad reddediliyor", {
+            _ = try FileManagerService.createFileSync(in: newFiles, name: invalid, type: .text)
+        }, matches: { if case FileOperationError.invalidName = $0 { return true }; return false })
+    }
+    let danglingLink = newFiles.appendingPathComponent("bag.txt")
+    do {
+        try FileManager.default.createSymbolicLink(atPath: danglingLink.path, withDestinationPath: "eksik")
+        expectError("Hedefi olmayan bağlantı üzerine yazılmıyor", {
+            _ = try FileManagerService.createFileSync(in: newFiles, name: "bag", type: .text)
+        }, matches: { if case FileOperationError.destinationExists = $0 { return true }; return false })
+    } catch {
+        expect(false, "Sembolik bağlantı oluşturulamadı: \(error)")
+    }
+    expectThrows("Olmayan klasöre dosya oluşturma hata veriyor") {
+        _ = try FileManagerService.createFileSync(
+            in: newFiles.appendingPathComponent("yok"), name: "dosya", type: .markdown
+        )
+    }
+
     expect((try? FileManagerService.validateName("rapor 2025.txt")) != nil, "Geçerli ad kabul ediliyor")
     for invalid in ["", ".", "..", "a/b.txt", "a:b.txt"] {
         expectThrows("Geçersiz ad reddediliyor: \"\(invalid)\"") {
@@ -244,6 +280,56 @@ func testFileManagerService() {
     expect(!FileManagerService.isSameLocation(sameURL, sameDir), "Farklı konum tespiti")
     expect(FileManagerService.isRoot(URL(fileURLWithPath: "/")), "Kök klasör tespiti")
     expect(!FileManagerService.isRoot(sameDir), "Kök olmayan klasör tespiti")
+}
+
+@MainActor
+func testNewFileWorkflow() async {
+    group("ViewModel: Yeni dosya")
+    let suiteName = "com.gms.commander.newfile.standalone.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        expect(false, "Yeni dosya ayarları oluşturulabildi")
+        return
+    }
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let root = freshDirectory("new-file-workflow")
+    let other = freshDirectory("new-file-other")
+    let settings = SettingsStore(defaults: defaults)
+    settings.leftPanelPath = root.path
+    settings.rightPanelPath = other.path
+    settings.refreshAutomatically = false
+    let favorites = FavoritesViewModel(defaults: defaults, includeMountedVolumes: false)
+    let model = MainViewModel(settings: settings, favorites: favorites)
+    model.openNewFileDialog()
+    guard let request = model.newFileRequest else {
+        expect(false, "Yeni dosya penceresi açılıyor")
+        return
+    }
+    expect(model.isModalPresented, "Yeni dosya penceresi modal olarak izleniyor")
+    model.activate(side: .right)
+    model.createNewFile(named: "proje", type: .markdown, request: request)
+    let created = root.appendingPathComponent("proje.md")
+    for _ in 0..<300 {
+        if model.leftPanel.selection.contains(created) { break }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+    expect(exists(created), "Dosya pencere açılan panelin klasöründe oluşturuluyor")
+    expect(model.leftPanel.items.contains(where: { $0.url == created }), "Hedef panel yenileniyor")
+    expect(model.leftPanel.selection.contains(created), "Yeni dosya hedef panelde seçiliyor")
+    expect(!exists(other.appendingPathComponent("proje.md")), "Sonradan etkinleşen panele dosya oluşturulmuyor")
+    expect(model.alert == nil, "Başarılı oluşturmada hata gösterilmiyor")
+    model.newFileRequest = nil
+    do {
+        try "korunan".write(to: created, atomically: true, encoding: .utf8)
+        model.createNewFile(named: "proje", type: .markdown, request: request)
+        for _ in 0..<300 {
+            if model.alert != nil { break }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(model.alert != nil, "Var olan dosya için kullanıcıya hata gösteriliyor")
+        expectEqual(try String(contentsOf: created, encoding: .utf8), "korunan", "Hata durumunda dosya korunuyor")
+    } catch {
+        expect(false, "Çakışma sınaması hazırlanamadı: \(error)")
+    }
 }
 
 // MARK: - Kopyalama
@@ -302,13 +388,48 @@ func testCopyService() {
         var total: Int64 = 0
     }
     let counter = ByteCounter()
-    try? FileCopyService.copySync(source: bigSource, to: bigTarget, overwrite: false) { counter.total += $0 }
+    try? FileCopyService.copySync(source: bigSource, to: bigTarget, overwrite: false) { counter.total = $0 }
     expectEqual(counter.total, 2_500_000, "İlerleme geri bildirimi toplam baytı veriyor")
 
     let estimateSource = writeFile("e.txt", "12345", in: freshDirectory())
-    let estimate = FileCopyService.estimateSync(estimateSource)
-    expectEqual(estimate.bytes, 5, "Tahmini boyut doğru")
-    expectEqual(estimate.itemCount, 1, "Tahmini öğe sayısı doğru")
+    let estimate = try? FileCopyService.estimateSync(estimateSource)
+    expectEqual(estimate?.bytes, 5, "Tahmini boyut doğru")
+    expectEqual(estimate?.itemCount, 1, "Tahmini öğe sayısı doğru")
+
+    let progressRoot = freshDirectory("copy-progress")
+    let progressSource = makeDirectory("kaynak", in: progressRoot)
+    writeFile("a.txt", "ilk", in: progressSource)
+    writeFile("b.txt", "ikinci", in: progressSource)
+    let progressTarget = progressRoot.appendingPathComponent("hedef")
+    final class ProgressObservation: @unchecked Sendable {
+        var firstReportBeforeCompletion = false
+        var reports: [Int64] = []
+    }
+    let observation = ProgressObservation()
+    do {
+        try FileCopyService.copySync(source: progressSource, to: progressTarget, overwrite: false) { bytes in
+            if observation.reports.isEmpty {
+                observation.firstReportBeforeCompletion = !exists(progressTarget.appendingPathComponent("b.txt"))
+            }
+            observation.reports.append(bytes)
+        }
+        expect(observation.firstReportBeforeCompletion, "Küçük dosyalarda klasör bitmeden ilerleme bildiriliyor")
+        expectEqual(observation.reports.last, 9, "Klasör ilerlemesi toplam baytı bildiriyor")
+    } catch {
+        expect(false, "Klasör ilerlemesi sınaması: \(error)")
+    }
+
+    let cancelDir = freshDirectory("copy-cancel")
+    let cancelSource = writeFile("kaynak", String(repeating: "x", count: 2_500_000), in: cancelDir)
+    let cancelTarget = writeFile("hedef", "eski", in: cancelDir)
+    let control = TransferControl()
+    expectError("Kopyalama iptali CancellationError döndürür", {
+        try FileCopyService.copySync(source: cancelSource, to: cancelTarget, overwrite: true, control: control) { _ in
+            control.cancel()
+        }
+    }, matches: { $0 is CancellationError })
+    expectEqual(try? String(contentsOf: cancelTarget, encoding: .utf8), "eski", "İptalde var olan hedef korunur")
+    expect(exists(cancelSource), "İptalde kaynak korunur")
 }
 
 // MARK: - Taşıma
@@ -338,6 +459,94 @@ func testMoveService() {
             overwrite: false
         ) { _ in }
     }
+
+    let mergeRoot = freshDirectory("move-merge")
+    let mergeSource = makeDirectory("kaynak", in: mergeRoot)
+    let mergeTarget = makeDirectory("hedef", in: mergeRoot)
+    writeFile("a.txt", "123", in: mergeSource)
+    let nestedSource = makeDirectory("alt", in: mergeSource)
+    writeFile("b.txt", "4567", in: nestedSource)
+    let nestedTarget = makeDirectory("alt", in: mergeTarget)
+    writeFile("korunan.txt", "eski", in: nestedTarget)
+    let moveProgress = ByteCounterForMove()
+    do {
+        try FileMoveService.moveSync(source: mergeSource, to: mergeTarget, overwrite: true) {
+            moveProgress.values.append($0)
+        }
+        expectEqual(moveProgress.values, [3, 7], "Klasör birleştirmede ilerleme birikimli")
+        expect(!exists(mergeSource), "Birleştirilmiş kaynak kaldırılır")
+        expectEqual(try? String(contentsOf: nestedTarget.appendingPathComponent("b.txt"), encoding: .utf8), "4567", "Alt klasör taşınır")
+        expect(exists(nestedTarget.appendingPathComponent("korunan.txt")), "Hedefteki diğer dosyalar korunur")
+    } catch {
+        expect(false, "Klasör birleştirme sınaması: \(error)")
+    }
+}
+
+final class ByteCounterForMove: @unchecked Sendable {
+    var values: [Int64] = []
+}
+
+@MainActor
+func testTransferWorkflow() async {
+    group("ViewModel: Kopyala, değiştir ve taşı")
+    let suiteName = "com.gms.commander.transfer.standalone.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        expect(false, "Aktarım ayarları oluşturulabildi")
+        return
+    }
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let root = freshDirectory("transfer-workflow")
+    let sourceDirectory = makeDirectory("kaynak", in: root)
+    let destinationDirectory = makeDirectory("hedef", in: root)
+    let source = writeFile("dosya.txt", "yeni içerik", in: sourceDirectory)
+    let destination = writeFile("dosya.txt", "eski içerik", in: destinationDirectory)
+    let settings = SettingsStore(defaults: defaults)
+    settings.leftPanelPath = sourceDirectory.path
+    settings.rightPanelPath = destinationDirectory.path
+    settings.refreshAutomatically = false
+    settings.conflictPolicy = .ask
+    let favorites = FavoritesViewModel(defaults: defaults, includeMountedVolumes: false)
+    let model = MainViewModel(settings: settings, favorites: favorites)
+
+    func waitUntil(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<300 {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
+    }
+
+    model.transfer(mode: .copy, sources: [source], to: destinationDirectory)
+    model.confirmTransfer()
+    expect(await waitUntil { model.pendingConflict != nil }, "Var olan hedef için değiştirme kararı sorulur")
+    model.resolveConflict(.overwrite)
+    expect(await waitUntil { !model.isOperating }, "Değiştirerek kopyalama tamamlanır")
+    expectEqual(try? String(contentsOf: destination, encoding: .utf8), "yeni içerik", "Onaylanan değiştirme hedefi günceller")
+    expect(exists(source), "Değiştirerek kopyalama kaynağı korur")
+    expect(model.alert == nil, "Başarılı kopyalamada hata gösterilmez")
+
+    let moveSource = writeFile("tasinacak.txt", "taşıma", in: sourceDirectory)
+    let moveTarget = destinationDirectory.appendingPathComponent(moveSource.lastPathComponent)
+    model.transfer(mode: .move, sources: [moveSource], to: destinationDirectory)
+    model.confirmTransfer()
+    model.pauseOperation()
+    expect(await waitUntil { model.operationProgress?.isPreparing == true }, "Duraklatılan aktarım hazırlık durumunu gösterir")
+    expect(!exists(moveTarget), "Duraklatılmış aktarım hedefi değiştirmez")
+    model.resumeOperation()
+    expect(await waitUntil { !model.isOperating }, "Sürdürülen taşıma tamamlanır")
+    expect(!exists(moveSource), "Taşıma kaynağı kaldırır")
+    expectEqual(try? String(contentsOf: moveTarget, encoding: .utf8), "taşıma", "Taşıma içeriği korur")
+    expect(model.alert == nil, "Başarılı taşımada hata gösterilmez")
+
+    let cancelledSource = writeFile("iptal.txt", "iptal", in: sourceDirectory)
+    model.transfer(mode: .copy, sources: [cancelledSource], to: destinationDirectory)
+    model.confirmTransfer()
+    model.pauseOperation()
+    model.cancelOperation()
+    expect(await waitUntil { !model.isOperating }, "Hazırlık sırasında iptal tamamlanır")
+    expect(!exists(destinationDirectory.appendingPathComponent("iptal.txt")), "İptal edilen aktarım hedef oluşturmaz")
+    expect(exists(cancelledSource), "İptal edilen aktarım kaynağı korur")
 }
 
 // MARK: - Arama
@@ -1286,6 +1495,32 @@ func testPasteTargetResolver() {
 func testFavoritesViewModel() {
     group("ViewModel: FavoritesViewModel")
 
+    let folderGroup = FavoriteGroup(name: "Folders", colorHex: 0, kind: .folder)
+    let menuFileGroup = FavoriteGroup(name: "Files", colorHex: 0, kind: .file)
+    var currentGroupID: UUID?
+    var selectionGroupID: UUID?
+    let addMenu = FavoritesSidebarView.FavoritesAddMenu(
+        groups: [folderGroup, menuFileGroup],
+        selectionCount: 1,
+        canAddCurrent: { $0.id == folderGroup.id },
+        canAddSelection: { $0.id == menuFileGroup.id },
+        addCurrent: { currentGroupID = $0.id },
+        addSelection: { selectionGroupID = $0.id }
+    )
+    let coordinator = addMenu.makeCoordinator()
+    let menu = coordinator.makeMenu()
+    if let folderMenu = menu.items.first?.submenu, let fileMenu = menu.items.last?.submenu,
+       folderMenu.items.count == 2, fileMenu.items.count == 2,
+       let currentAction = folderMenu.items[0].action, let selectionAction = fileMenu.items[1].action {
+        expect(folderMenu.items[0].isEnabled && !folderMenu.items[1].isEnabled, "Klasör menüsünde uygun işlem etkin")
+        expect(!fileMenu.items[0].isEnabled && fileMenu.items[1].isEnabled, "Dosya menüsünde uygun işlem etkin")
+        coordinator.perform(currentAction, with: folderMenu.items[0])
+        coordinator.perform(selectionAction, with: fileMenu.items[1])
+        expectEqual(currentGroupID, folderGroup.id, "Geçerli klasör doğru bölüme ekleniyor")
+        expectEqual(selectionGroupID, menuFileGroup.id, "Seçim doğru bölüme ekleniyor")
+    } else {
+        expect(false, "Bölüm alt menüleri ve işlemleri oluşturuluyor")
+    }
     let suiteName = "com.gms.commander.favorites.standalone.\(UUID().uuidString)"
     guard let defaults = UserDefaults(suiteName: suiteName) else {
         expect(false, "Test UserDefaults paketi oluşturulabildi")
@@ -1419,6 +1654,76 @@ func testFavoritesViewModel() {
     } else {
         expect(false, "Disk yenileme testi için UserDefaults oluşturuluyor")
     }
+}
+
+@MainActor
+func testVolumeEjectWorkflow() async {
+    group("ViewModel: Harici disk çıkarma")
+    let external = VolumeDeviceInfo(
+        isVolume: true, isLocal: true, isInternal: false, isRemovable: false, isEjectable: false
+    )
+    expect(external.isExternal, "Harici SSD gibi çıkarılabilir olmayan dış aygıt tanınıyor")
+    expect(VolumeDeviceInfo(isVolume: true, isLocal: true, isInternal: nil, isRemovable: true, isEjectable: nil).isExternal,
+           "Dahili bilgisi bilinmeyen çıkarılabilir aygıt tanınıyor")
+    expect(!VolumeDeviceInfo(isVolume: true, isLocal: true, isInternal: true, isRemovable: true, isEjectable: true).isExternal,
+           "Dahili birim harici aygıt sayılmıyor")
+    expect(!VolumeDeviceInfo(isVolume: true, isLocal: false, isInternal: false, isRemovable: true, isEjectable: true).isExternal,
+           "Ağ birimi harici aygıt sayılmıyor")
+    expect(!VolumeDeviceInfo(isVolume: true, isLocal: true, isInternal: nil, isRemovable: nil, isEjectable: nil).isExternal,
+           "Aygıt türü bilinmiyorsa çıkarma sunulmuyor")
+    expect(!VolumeDeviceInfo(isVolume: false, isLocal: true, isInternal: false, isRemovable: true, isEjectable: true).isExternal,
+           "Birim olmayan klasöre çıkarma sunulmuyor")
+
+    let suiteName = "com.gms.commander.eject.standalone.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        expect(false, "Disk testi ayarları oluşturulabildi")
+        return
+    }
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let volume = freshDirectory("fake-volume")
+    let nested = makeDirectory("alt", in: volume)
+    let settings = SettingsStore(defaults: defaults)
+    settings.leftPanelPath = nested.path
+    settings.rightPanelPath = volume.path
+    settings.refreshAutomatically = false
+    let favorites = FavoritesViewModel(defaults: defaults, includeMountedVolumes: false)
+    let wait = DispatchSemaphore(value: 0)
+    let fakeService = VolumeService(info: { _ in external }, eject: { _ in wait.wait() })
+    let model = MainViewModel(settings: settings, favorites: favorites, volumeService: fakeService)
+    let item = FavoriteFolder(path: volume.path)
+    let root = FavoriteFolder(path: "/")
+    expect(!model.isExternalVolume(root.url), "Sistem kökü harici disk olarak gösterilmiyor")
+    model.ejectVolume(root)
+    expect(model.alert != nil && !model.isOperating, "Sistem kökünün çıkarılması reddediliyor")
+    model.alert = nil
+
+    model.ejectVolume(item)
+    expect(model.isOperating && model.ejectingVolumePath == item.path, "Çıkarma sırasında işlem durumu gösteriliyor")
+    model.ejectVolume(item)
+    expect(model.alert != nil, "İşlem sürerken ikinci çıkarma reddediliyor")
+    model.alert = nil
+    wait.signal()
+    for _ in 0..<300 {
+        if !model.isOperating { break }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+    expect(!model.isOperating && model.ejectingVolumePath == nil, "Başarılı çıkarmada işlem durumu temizleniyor")
+    let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+    expectEqual(model.leftPanel.currentDirectory.standardizedFileURL.path, home, "Disk altındaki panel güvenli klasöre geçiyor")
+    expectEqual(model.rightPanel.currentDirectory.standardizedFileURL.path, home, "Diskteki ikinci panel güvenli klasöre geçiyor")
+
+    let failureService = VolumeService(
+        info: { _ in external },
+        eject: { _ in throw NSError(domain: NSPOSIXErrorDomain, code: Int(EBUSY)) }
+    )
+    let failureModel = MainViewModel(settings: settings, favorites: favorites, volumeService: failureService)
+    failureModel.ejectVolume(item)
+    for _ in 0..<300 {
+        if !failureModel.isOperating { break }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+    expect(failureModel.alert != nil, "Çıkarma hatası kullanıcıya gösteriliyor")
+    expect(failureModel.ejectingVolumePath == nil, "Hata durumunda işlem durumu temizleniyor")
 }
 
 // MARK: - Panel görünüm modeli
@@ -2066,8 +2371,10 @@ print("Klasör: \(workRoot.path)")
 
 testFileItem()
 testFileManagerService()
+await testNewFileWorkflow()
 testCopyService()
 testMoveService()
+await testTransferWorkflow()
 testSearchService()
 testAdvancedSearchService()
 testFileHashService()
@@ -2081,6 +2388,7 @@ testFolderCompareService()
 testFileProperties()
 testFormatters()
 testFavoritesViewModel()
+await testVolumeEjectWorkflow()
 testSettingsStore()
 testThemeManager()
 testPathBreadcrumbs()

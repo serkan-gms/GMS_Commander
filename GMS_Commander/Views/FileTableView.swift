@@ -668,6 +668,7 @@ struct FileTableView: NSViewRepresentable {
             }
 
             menu.addItem(.separator())
+            menu.addItem(menuItem("menu.file.newFile", #selector(newFile), enabled: true, key: ""))
             menu.addItem(menuItem("menu.file.newFolder", #selector(newFolder), enabled: true, key: ""))
             menu.addItem(additionalMenuItem("menu.tools.openTerminal", #selector(openTerminal), action: .terminal, enabled: true))
             menu.addItem(additionalMenuItem("menu.edit.rename", #selector(renameSelection), action: .rename, enabled: hasSingle))
@@ -772,9 +773,14 @@ struct FileTableView: NSViewRepresentable {
         @objc private func refresh() { viewModel.refreshActivePanel() }
         @objc private func toggleHidden() { viewModel.toggleHiddenFiles() }
 
+        @objc private func newFile() {
+            viewModel.activate(side: side)
+            viewModel.openNewFileDialog()
+        }
+
         @objc private func newFolder() {
             viewModel.activate(side: side)
-            viewModel.createNewFolder()
+            viewModel.openNewFolderDialog()
         }
 
         @objc private func openTerminal() {

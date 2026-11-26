@@ -124,26 +124,43 @@ struct MainWindowView: View {
         .onChange(of: settings.foldersFirst) { _, _ in
             viewModel.refreshAll()
         }
+        .sheet(item: $viewModel.newFileRequest) { request in
+            NewFileSheet { name, type in
+                viewModel.createNewFile(named: name, type: type, request: request)
+            }
+            .commanderWindowBranding()
+        }
+        .sheet(item: $viewModel.newFolderRequest) { request in
+            NewFolderSheet(preferredName: request.preferredName) { newName in
+                viewModel.createNewFolder(named: newName)
+            }
+            .commanderWindowBranding()
+        }
         .sheet(item: $viewModel.renameRequest) { request in
             RenameSheet(request: request) { newName in
                 viewModel.rename(request.item, to: newName)
             }
+            .commanderWindowBranding()
         }
         .sheet(item: $viewModel.propertiesItem) { item in
             PropertiesSheet(item: item, viewModel: viewModel)
+                .commanderWindowBranding()
         }
         .sheet(item: $viewModel.pendingConflict) { request in
             ConflictSheet(request: request) { decision, applyToAll in
                 viewModel.resolveConflict(decision, applyToAll: applyToAll)
             }
+            .commanderWindowBranding()
         }
         .sheet(isPresented: $viewModel.isShowingHelp) {
             HelpView(bindings: settings.keyBindings)
+                .commanderWindowBranding()
         }
         .sheet(isPresented: $viewModel.isShowingAdvancedSearch) {
             AdvancedSearchSheet(root: viewModel.activePanel.currentDirectory) { item in
                 viewModel.revealSearchResult(item)
             }
+            .commanderWindowBranding()
         }
         .sheet(isPresented: $viewModel.isShowingFolderCompare) {
             FolderCompareSheet(
@@ -152,9 +169,11 @@ struct MainWindowView: View {
             ) { url, side in
                 viewModel.revealCompareItem(url, side: side)
             }
+            .commanderWindowBranding()
         }
         .sheet(item: $viewModel.hashRequest) { request in
             FileHashSheet(urls: request.urls)
+                .commanderWindowBranding()
         }
         .sheet(isPresented: $viewModel.isShowingPatternSelection) {
             SelectionPatternSheet(
@@ -163,22 +182,27 @@ struct MainWindowView: View {
             ) { urls, mode in
                 viewModel.applyPatternSelection(urls, mode: mode)
             }
+            .commanderWindowBranding()
         }
         .sheet(item: $viewModel.viewerFile, onDismiss: viewModel.refreshAfterEditing) { request in
             FileViewerSheet(url: request.url)
+                .commanderWindowBranding()
         }
         .sheet(item: $viewModel.editorFile, onDismiss: viewModel.refreshAfterEditing) { request in
             FileEditorSheet(url: request.url)
+                .commanderWindowBranding()
         }
         .sheet(item: $viewModel.batchRenameRequest) { request in
             BatchRenameSheet(files: request.files) { _ in
                 viewModel.refreshAfterBatchRename()
             }
+            .commanderWindowBranding()
         }
         .sheet(isPresented: $viewModel.isShowingTrashRestore) {
             TrashRestoreView(destination: viewModel.activePanel.currentDirectory) {
                 viewModel.refreshAfterTrashOperation()
             }
+            .commanderWindowBranding()
         }
         .sheet(item: $viewModel.archiveBrowser) { request in
             ArchiveBrowserView(
@@ -187,9 +211,10 @@ struct MainWindowView: View {
             ) {
                 viewModel.refreshAfterArchiveExtraction()
             }
+            .commanderWindowBranding()
         }
         .confirmationDialog(
-            viewModel.deletionRequest?.title ?? L.t("delete.confirm.title"),
+            "\(L.t("app.name")) — \(viewModel.deletionRequest?.title ?? L.t("delete.confirm.title"))",
             isPresented: deletionBinding,
             titleVisibility: .visible,
             presenting: viewModel.deletionRequest
@@ -204,7 +229,7 @@ struct MainWindowView: View {
             Text(request.message)
         }
         .confirmationDialog(
-            viewModel.transferConfirmation?.title ?? L.t("transfer.confirm.copy.title"),
+            "\(L.t("app.name")) — \(viewModel.transferConfirmation?.title ?? L.t("transfer.confirm.copy.title"))",
             isPresented: transferConfirmationBinding,
             titleVisibility: .visible,
             presenting: viewModel.transferConfirmation
@@ -219,7 +244,7 @@ struct MainWindowView: View {
             Text(request.message)
         }
         .alert(
-            viewModel.alert?.title ?? L.t("error.title.generic"),
+            "\(L.t("app.name")) — \(viewModel.alert?.title ?? L.t("error.title.generic"))",
             isPresented: alertBinding,
             presenting: viewModel.alert
         ) { _ in
@@ -370,7 +395,7 @@ struct MainWindowView: View {
             guard !viewModel.activePanel.selection.isEmpty else { return false }
             viewModel.moveToOtherPanel()
         case .newFolder:
-            viewModel.createNewFolder()
+            viewModel.openNewFolderDialog()
         case .delete:
             guard !viewModel.activePanel.selection.isEmpty else { return false }
             viewModel.requestTrashConfirmation()
@@ -640,7 +665,7 @@ struct MainToolbarView: View {
             Spacer(minLength: 8)
 
             iconButton("folder.badge.plus", help: L.t("toolbar.newFolder")) {
-                viewModel.createNewFolder()
+                viewModel.openNewFolderDialog()
             }
             iconButton("terminal", help: L.t("menu.tools.openTerminal")) {
                 viewModel.openTerminal()
@@ -810,13 +835,31 @@ struct OperationProgressView: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: 220, alignment: .leading)
 
-            ProgressView(value: model.fraction)
-                .frame(maxWidth: 200)
+            if progress.isPreparing {
+                ProgressView()
+                    .controlSize(.small)
+                Text(L.t("operation.preparing"))
+                    .font(.system(size: 10, design: .monospaced))
+            } else {
+                ProgressView(value: model.fraction)
+                    .frame(maxWidth: 200)
+            }
 
-            Text(model.percentText)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Theme.textPrimary)
-                .monospacedDigit()
+            Button(isPaused ? L.t("operation.resume") : L.t("operation.pause")) {
+                isPaused ? onResume() : onPause()
+            }
+            .controlSize(.small)
+            .disabled(progress.kind == .delete || progress.kind == .trash)
+
+            Button(L.t("common.cancel"), action: onCancel)
+                .controlSize(.small)
+
+            if !progress.isPreparing {
+                Text(model.percentText)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary)
+                    .monospacedDigit()
+            }
 
             if model.showsByteCount {
                 Text(model.byteCountText)
@@ -847,14 +890,6 @@ struct OperationProgressView: View {
 
             Spacer()
 
-            Button(isPaused ? L.t("operation.resume") : L.t("operation.pause")) {
-                isPaused ? onResume() : onPause()
-            }
-            .controlSize(.small)
-            .disabled(progress.kind == .delete || progress.kind == .trash)
-
-            Button(L.t("common.cancel"), action: onCancel)
-                .controlSize(.small)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)

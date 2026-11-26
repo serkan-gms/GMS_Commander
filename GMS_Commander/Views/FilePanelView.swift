@@ -71,9 +71,13 @@ struct FilePanelView: View {
             viewModel.searchFocusSide = nil
         }
         .contextMenu {
+            Button(L.t("menu.file.newFile")) {
+                viewModel.activate(side: panel.side)
+                viewModel.openNewFileDialog()
+            }
             Button(L.t("menu.file.newFolder")) {
                 viewModel.activate(side: panel.side)
-                viewModel.createNewFolder()
+                viewModel.openNewFolderDialog()
             }
             Button(L.t("menu.tools.openTerminal")) {
                 viewModel.activate(side: panel.side)

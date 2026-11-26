@@ -40,6 +40,7 @@ struct GMSCommanderApp: App {
             SettingsView(settings: settings)
                 .environmentObject(theme)
                 .environmentObject(favorites)
+                .commanderWindowBranding()
         }
     }
 }

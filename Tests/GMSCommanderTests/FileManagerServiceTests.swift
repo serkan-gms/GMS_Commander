@@ -54,6 +54,26 @@ final class FileManagerServiceTests: XCTestCase {
         XCTAssertEqual(second.lastPathComponent, "Klasör 2")
     }
 
+    func testCreateEmptyTextAndMarkdownFiles() throws {
+        let text = try FileManagerService.createFileSync(in: directory, name: "not", type: .text)
+        let markdown = try FileManagerService.createFileSync(in: directory, name: "README.MD", type: .markdown)
+        XCTAssertEqual(text.lastPathComponent, "not.txt")
+        XCTAssertEqual(markdown.lastPathComponent, "README.MD")
+        XCTAssertEqual(try Data(contentsOf: text).count, 0)
+        XCTAssertEqual(try Data(contentsOf: markdown).count, 0)
+    }
+
+    func testCreateFileRejectsExistingOrInvalidName() throws {
+        let existing = try TestSupport.writeFile(named: "not.txt", contents: "korunan", in: directory)
+        XCTAssertThrowsError(try FileManagerService.createFileSync(in: directory, name: "not", type: .text)) { error in
+            guard case FileOperationError.destinationExists = error else {
+                return XCTFail("Beklenen hata destinationExists, gelen: \(error)")
+            }
+        }
+        XCTAssertEqual(try String(contentsOf: existing, encoding: .utf8), "korunan")
+        XCTAssertThrowsError(try FileManagerService.createFileSync(in: directory, name: "../not", type: .text))
+    }
+
     func testValidateNameAcceptsValidNames() throws {
         XCTAssertNoThrow(try FileManagerService.validateName("rapor 2025.txt"))
         XCTAssertNoThrow(try FileManagerService.validateName(".gizli"))

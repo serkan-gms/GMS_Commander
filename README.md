@@ -33,6 +33,7 @@ fman'ın kullanım kolaylığından ilham alır; SwiftUI + AppKit ile sıfırdan
 **Dosya işlemleri**
 - Kopyala / kes / yapıştır, paneller arası `F5` ile kopyalama, `F6` ile taşıma.
 - Yeniden adlandırma, yeni klasör oluşturma, Çöp Kutusu'na taşıma, kalıcı silme (onaylı).
+- Dosya ve sağ tık menülerinden etkin klasörde boş TXT veya Markdown dosyası oluşturma; var olan dosyalar korunur.
 - Uzun işlemler arka planda yürür; ilerleme çubuğu, işlem türü, geçerli öğe, yüzde ve bayt bilgisi gösterilir, işlem iptal edilebilir.
 - Çakışmalarda "Üzerine yaz / Atla / Yeniden adlandır / Tümüne uygula" seçenekleri.
 - Sembolik bağlantı, paket (bundle) klasörü, izin ve erişim hataları güvenli biçimde ele alınır; hatalar Türkçe gösterilir.
@@ -61,6 +62,7 @@ fman'ın kullanım kolaylığından ilham alır; SwiftUI + AppKit ile sıfırdan
 - Özel isimli/renkli bölümler oluşturma, yeniden sıralama, yeniden adlandırma ve silme; kayıtları bölümler arasında taşıma.
 - Dosya/klasöre sağ tıklayıp hızlı erişime ekleme; klasörler Hızlı Erişim'e, `.app` uygulamaları Uygulamalar'a eklenir ve uygulamalar doğrudan başlatılır. Kayıtlı öğeler kendi bağlam menüsünden kaldırılabilir.
 - Bağlı diskleri Diskler bölümünde gösterme; standart macOS klasör adlarını Türkçe görüntüleme.
+- Harici diskleri ayrı simgeyle gösterme ve yanlarındaki çıkar düğmesiyle güvenle ayırma.
 - Kenar çubuğu, uygulama temasından bağımsız olarak macOS'un yerel Finder benzeri görünümünü kullanır.
 - Hızlı erişim öğesinin görünen adını düzenleme ve bölüm içinde sıralama.
 
@@ -70,7 +72,7 @@ fman'ın kullanım kolaylığından ilham alır; SwiftUI + AppKit ile sıfırdan
 - `F11` ile seçili dosya ve klasörleri ZIP arşivine sıkıştırma.
 - `F8` ile Çöp Kutusu'na taşımadan önce onay isteme.
 - Fare ile tek tıklama seçimi her zaman değiştirir, çift tıklama açar, boş alana tıklama seçimi temizler.
-- Sağ tık menüsünde **Yeni Klasör** ve **Terminal'de Aç** (geçerli klasörde yeni Terminal penceresi).
+- Sağ tık menüsünde **Yeni Dosya**, **Yeni Klasör** ve **Terminal'de Aç** (geçerli klasörde yeni Terminal penceresi).
 
 ---
 

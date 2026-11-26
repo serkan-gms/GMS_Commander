@@ -32,17 +32,17 @@ struct FileCopyService: Sendable {
     /// Kaynağın toplam boyutunu ve öğe sayısını hesaplar.
     /// - Parameter source: Ölçülecek kök öğe.
     /// - Returns: Bayt ve öğe sayısı tahmini.
-    func estimate(source: URL) async -> CopyEstimate {
-        await Task.detached(priority: .utility) {
-            Self.estimateSync(source)
+    func estimate(source: URL, control: TransferControl? = nil) async throws -> CopyEstimate {
+        try await Task.detached(priority: .utility) {
+            try Self.estimateSync(source, control: control)
         }.value
     }
 
     /// Birden fazla kaynak için toplam tahmin üretir.
-    func estimate(sources: [URL]) async -> CopyEstimate {
-        await Task.detached(priority: .utility) {
-            sources.reduce(into: CopyEstimate()) { partial, url in
-                let estimate = Self.estimateSync(url)
+    func estimate(sources: [URL]) async throws -> CopyEstimate {
+        try await Task.detached(priority: .utility) {
+            try sources.reduce(into: CopyEstimate()) { partial, url in
+                let estimate = try Self.estimateSync(url)
                 partial.bytes += estimate.bytes
                 partial.itemCount += estimate.itemCount
             }
@@ -114,7 +114,9 @@ struct FileCopyService: Sendable {
 
     /// Kaynağın boyutunu ve içerdiği öğe sayısını hesaplar.
     /// Paketler (ör. .app) bir klasör gibi kopyalandığı için içerikleri de sayılır.
-    static func estimateSync(_ source: URL) -> CopyEstimate {
+    static func estimateSync(_ source: URL, control: TransferControl? = nil) throws -> CopyEstimate {
+        try control?.waitIfPaused()
+        try Task.checkCancellation()
         let fileManager = FileManager.default
         var estimate = CopyEstimate()
 
@@ -142,6 +144,8 @@ struct FileCopyService: Sendable {
                 return estimate
             }
             for case let childURL as URL in enumerator {
+                try control?.waitIfPaused()
+                try Task.checkCancellation()
                 guard let childValues = try? childURL.resourceValues(forKeys: resourceKeys) else { continue }
                 estimate.itemCount += 1
                 if childValues.isSymbolicLink == true { continue }
@@ -323,7 +327,6 @@ struct FileCopyService: Sendable {
             let output = try FileHandle(forWritingTo: temporaryURL)
             defer { try? output.close() }
 
-            var lastReport = DispatchTime.now()
             while true {
                 try control?.waitIfPaused()
                 try Task.checkCancellation()
@@ -333,13 +336,6 @@ struct FileCopyService: Sendable {
                 }
                 try output.write(contentsOf: data)
                 reporter.add(Int64(data.count))
-
-                // Arayüzü çok sık güncellememek için 100 ms'lik bir sınır uyguluyoruz.
-                let now = DispatchTime.now()
-                if now.uptimeNanoseconds &- lastReport.uptimeNanoseconds > 100_000_000 {
-                    lastReport = now
-                    reporter.flush()
-                }
             }
             try output.synchronize()
             try output.close()
@@ -507,6 +503,7 @@ private final class ProgressReporter {
     private let onProgress: @Sendable (Int64) -> Void
     private var completedBytes: Int64 = 0
     private var lastFlushedBytes: Int64 = -1
+    private var lastReportTime: UInt64?
 
     init(onProgress: @escaping @Sendable (Int64) -> Void) {
         self.onProgress = onProgress
@@ -515,12 +512,17 @@ private final class ProgressReporter {
     /// Tamamlanan bayt miktarını artırır.
     func add(_ bytes: Int64) {
         completedBytes += bytes
+        let now = DispatchTime.now().uptimeNanoseconds
+        if lastReportTime.map({ now &- $0 >= 100_000_000 }) ?? true {
+            flush()
+        }
     }
 
     /// Biriktirilen değeri bildirir.
     func flush() {
         guard completedBytes != lastFlushedBytes else { return }
         lastFlushedBytes = completedBytes
+        lastReportTime = DispatchTime.now().uptimeNanoseconds
         onProgress(completedBytes)
     }
 }

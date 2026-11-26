@@ -9,7 +9,112 @@
 import SwiftUI
 import AppKit
 
-// MARK: - Yeniden adlandırma
+struct NewFileSheet: View {
+    let onCommit: (String, NewFileType) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var fieldFocused: Bool
+    @State private var name = L.t("newFile.defaultName")
+    @State private var type: NewFileType = .text
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(L.t("menu.file.newFile"), systemImage: "doc.badge.plus")
+                .font(.headline)
+
+            TextField(L.t("newFile.placeholder"), text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($fieldFocused)
+                .onSubmit(commit)
+
+            Picker(L.t("newFile.type"), selection: $type) {
+                ForEach(NewFileType.allCases) { type in
+                    Text(type.localizedTitle).tag(type)
+                }
+            }
+
+            Text(L.t("newFile.hint"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button(L.t("common.cancel")) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(L.t("common.create"), action: commit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmedName.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .onAppear { fieldFocused = true }
+    }
+
+    private func commit() {
+        guard !trimmedName.isEmpty else { return }
+        onCommit(trimmedName, type)
+        dismiss()
+    }
+}
+
+// MARK: - Yeni klasör oluşturma
+
+/// Yeni klasör oluşturma sayfası: kullanıcıdan oluşturulacak klasörün adını
+/// ister, varsayılan olarak "Yeni Klasör" gösterilir.
+struct NewFolderSheet: View {
+    let preferredName: String
+    let onCommit: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var fieldFocused: Bool
+    @State private var name: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(L.t("toolbar.newFolder"), systemImage: "folder.badge.plus")
+                .font(.headline)
+
+            Text(L.t("newFolder.hint"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextField(L.t("newFolder.placeholder"), text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($fieldFocused)
+                .onSubmit(commit)
+
+            HStack {
+                Spacer()
+                Button(L.t("common.cancel")) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(L.t("common.create")) { commit() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmedName.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .onAppear {
+            name = preferredName
+            fieldFocused = true
+        }
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func commit() {
+        guard !trimmedName.isEmpty else { return }
+        onCommit(trimmedName)
+        dismiss()
+    }
+}
 
 /// Yeniden adlandırma sayfası.
 struct RenameSheet: View {

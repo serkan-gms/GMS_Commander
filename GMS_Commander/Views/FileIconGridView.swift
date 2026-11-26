@@ -163,6 +163,10 @@ struct FileIconGridView: View {
             viewModel.cutSelection()
         }
         Button(L.t("menu.edit.paste")) { viewModel.paste() }
+        Button(L.t("menu.file.newFile")) {
+            viewModel.activate(side: panel.side)
+            viewModel.openNewFileDialog()
+        }
         if item.url.pathExtension.lowercased() == "app" {
             Button(L.t("favorites.addApplication")) {
                 viewModel.activate(side: panel.side)

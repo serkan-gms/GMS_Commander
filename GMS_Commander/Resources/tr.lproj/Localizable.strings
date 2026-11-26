@@ -175,6 +175,7 @@
 "menu.file.deletePermanently" = "Kalıcı Olarak Sil";
 "menu.file.hideHidden" = "Gizli Dosyaları Gizle";
 "menu.file.newFolder" = "Yeni Klasör";
+"menu.file.newFile" = "Yeni Dosya";
 "menu.file.open" = "Aç";
 "menu.file.openInOtherPanel" = "Diğer Pencerede Aç";
 "menu.file.openWith" = "Birlikte Aç…";
@@ -207,6 +208,16 @@
 "menu.view.showTwoPanels" = "İki Paneli Göster";
 
 "newFolder.defaultName" = "Yeni Klasör";
+"newFile.defaultName" = "Yeni Dosya";
+"newFile.placeholder" = "Dosya adı";
+"newFile.type" = "Dosya türü";
+"newFile.type.text" = "Metin (.txt)";
+"newFile.type.markdown" = "Markdown (.md)";
+"newFile.hint" = "Seçilen uzantı dosya adında yoksa otomatik eklenir. Var olan dosyalar değiştirilmez.";
+
+"newFolder.hint" = "Oluşturulacak klasörün adını girin; onaylarsa varsayılan adıyla oluşturulur.";
+"newFolder.placeholder" = "Klasör adı";
+"common.create" = "Oluştur";
 
 /* MARK: - Birlikte aç */
 "openWith.message" = "Seçili öğeleri açmak istediğiniz uygulamayı seçin.";
@@ -217,6 +228,7 @@
 "operation.cancelled" = "İptal edildi";
 "operation.cancelledTitle" = "İşlem İptal Edildi";
 "operation.copy" = "Kopyalanıyor";
+"operation.preparing" = "Boyut hesaplanıyor…";
 "operation.delete" = "Siliniyor";
 "operation.failedTitle" = "İşlem Tamamlanamadı";
 "operation.failures" = "%d öğe başarısız oldu:";
@@ -440,6 +452,11 @@
 "favorites.openRight" = "Sağ Panelde Aç";
 "favorites.removeGroupHint" = "Bölüm silinince içindekiler başka bölüme taşınır.";
 "favorites.rename" = "Hızlı erişim adını değiştir";
+"favorites.ejectHelp" = "“%@” aygıtını güvenle çıkar";
+"favorites.ejectFailedTitle" = "Aygıt çıkarılamadı";
+"favorites.ejectFailed" = "“%@” çıkarılamadı: %@";
+"favorites.ejectUnavailable" = "“%@” bağlı bir harici disk olarak doğrulanamadı.";
+"favorites.ejectBusy" = "Bir dosya işlemi sürerken disk çıkarılamaz. İşlemin bitmesini bekleyin.";
 "favorites.renameTitle" = "Hızlı Erişim Adını Değiştir";
 "favorites.remove" = "Sık Kullanılanlardan Çıkar";
 "favorites.removeApplication" = "Uygulamalar'dan Çıkar";

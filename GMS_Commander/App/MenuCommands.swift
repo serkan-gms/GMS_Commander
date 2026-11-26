@@ -15,8 +15,12 @@ struct CommanderCommands: Commands {
     var body: some Commands {
         // MARK: Dosya
         CommandGroup(replacing: .newItem) {
+            Button(L.t("menu.file.newFile")) {
+                viewModel.openNewFileDialog()
+            }
+
             Button(L.t("menu.file.newFolder")) {
-                viewModel.createNewFolder()
+                viewModel.openNewFolderDialog()
             }
             .keyboardShortcut("N", modifiers: [.command, .shift])
 

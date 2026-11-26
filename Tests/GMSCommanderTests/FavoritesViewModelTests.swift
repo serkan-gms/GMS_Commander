@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AppKit
 import XCTest
 @testable import GMS_Commander
 
@@ -14,6 +15,34 @@ final class FavoritesViewModelTests: XCTestCase {
     private var directory: URL!
     private var suiteName: String!
     private var defaults: UserDefaults!
+
+    func testAddMenuKeepsGroupActionsAndAvailability() throws {
+        let folders = FavoriteGroup(name: "Folders", colorHex: 0, kind: .folder)
+        let files = FavoriteGroup(name: "Files", colorHex: 0, kind: .file)
+        var currentGroup: UUID?
+        var selectionGroup: UUID?
+        let view = FavoritesSidebarView.FavoritesAddMenu(
+            groups: [folders, files],
+            selectionCount: 1,
+            canAddCurrent: { $0.id == folders.id },
+            canAddSelection: { $0.id == files.id },
+            addCurrent: { currentGroup = $0.id },
+            addSelection: { selectionGroup = $0.id }
+        )
+        let coordinator = view.makeCoordinator()
+        let menu = coordinator.makeMenu()
+        let foldersMenu = try XCTUnwrap(menu.items.first?.submenu)
+        let filesMenu = try XCTUnwrap(menu.items.last?.submenu)
+        XCTAssertTrue(foldersMenu.items[0].isEnabled)
+        XCTAssertFalse(foldersMenu.items[1].isEnabled)
+        XCTAssertFalse(filesMenu.items[0].isEnabled)
+        XCTAssertTrue(filesMenu.items[1].isEnabled)
+
+        coordinator.perform(try XCTUnwrap(foldersMenu.items[0].action), with: foldersMenu.items[0])
+        coordinator.perform(try XCTUnwrap(filesMenu.items[1].action), with: filesMenu.items[1])
+        XCTAssertEqual(currentGroup, folders.id)
+        XCTAssertEqual(selectionGroup, files.id)
+    }
 
     override func setUpWithError() throws {
         directory = try TestSupport.makeTemporaryDirectory()
