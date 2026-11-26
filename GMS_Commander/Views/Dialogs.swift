@@ -419,7 +419,7 @@ struct HelpView: View {
 
 /// Uygulama sürüm bilgisi.
 enum AppInfo {
-    static let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.0.0"
+    static let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.0.1"
     static let build = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "1"
     static let name = (Bundle.main.infoDictionary?["CFBundleName"] as? String) ?? "GMS Commander"
     /// Programı hazırlayan kişi.

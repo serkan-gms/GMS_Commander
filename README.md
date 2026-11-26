@@ -5,7 +5,7 @@ fman'ın kullanım kolaylığından ilham alır; SwiftUI + AppKit ile sıfırdan
 
 | | |
 |---|---|
-| Sürüm | 1.0.0 |
+| Sürüm | 1.0.1 |
 | Paket kimliği | `com.gms.commander` |
 | Minimum sistem | macOS 14.0 (Sonoma) |
 | Mimari | Apple Silicon (arm64) |
@@ -47,6 +47,7 @@ fman'ın kullanım kolaylığından ilham alır; SwiftUI + AppKit ile sıfırdan
 - Gelişmiş arama (`⌥⌘F`): ad/joker/düzenli ifade, uzantı, boyut, tarih, içerik ve hariç tutma ölçütleri; 5.000 sonuç sınırı, iptal ve CSV dışa aktarma.
 - Gelişmiş arama sonuçlarından öğeyi panelde gösterme, açma ve yol kopyalama.
 - Görüntüleyici (`F3`): metin/kod, ikili dosyalarda hex görünümü, kodlama algılama; resim ve PDF için sistem önizlemesi.
+- NC önizlemesi (`F3`): `.nc`, `.gcode` ve `.cnc` dosyalarında kod ile 3B takım yolu ve animasyon; `Esc` ile kapatma.
 - Düzenleyici (`F4`): metin düzenleme, atomik kaydetme, dış değişiklik uyarısı ve üzerine yazma onayı.
 - İki klasörü ad, boyut, tarih ve isteğe bağlı SHA-256 içeriğine göre karşılaştırma (`⌥⌘K`); salt okunur rapor, süzgeçler ve CSV dışa aktarma.
 - SHA-256 özeti hesaplama (`⌥⌘H`): parçalı okuma, iptal, panoya kopyalama ve CSV.
@@ -73,6 +74,44 @@ fman'ın kullanım kolaylığından ilham alır; SwiftUI + AppKit ile sıfırdan
 - `F8` ile Çöp Kutusu'na taşımadan önce onay isteme.
 - Fare ile tek tıklama seçimi her zaman değiştirir, çift tıklama açar, boş alana tıklama seçimi temizler.
 - Sağ tık menüsünde **Yeni Dosya**, **Yeni Klasör** ve **Terminal'de Aç** (geçerli klasörde yeni Terminal penceresi).
+
+---
+
+## Fusion 360 NC önizlemesi
+
+Fusion 360'da profil menüsünden **Preferences → General → Manufacture → External Editor**
+alanında bağımsız **GMS NC Preview.app** uygulamasını seçin. NC Program penceresinde **Open NC file in editor**
+seçeneğini etkinleştirin. Fusion dosyayı uygulamaya gönderdiğinde NC önizleme penceresi açılır.
+Fusion uygulama paketi yerine çalıştırılabilir dosya istiyorsa `GMS NC Preview.app/Contents/MacOS/GMS NC Preview`
+yolunu kullanın. Bağımsız uygulama Commander'ı açmadan çalışır; Commander içinde F3
+aynı NC modülünü kullanır. Önizleme ayrı bir pencerede duraklatılmış açılır; kod düzenlenebilir,
+`⌘S` ile kaydedilebilir veya farklı kaydedilebilir. Kaydedilmemiş değişiklikler
+kapatılırken sorulur. Kod satırları ile ilerleme çubuğu birbirine bağlanır.
+Yol görünümü, takım göstergesi, oynatma hızı ve kamera kontrolleri önizleme içinde
+değiştirilebilir. Tekerlek yakınlaştırır; orta tuşla sürükleme döndürür, ⌘ ve
+orta tuşla sürükleme kaydırır. Bilgi paneli kamera araç çubuğundan gizlenebilir.
+Görünüm küpündeki Üst, Ön ve Sağ düğmeleri sabit dünya eksenlerini kullanır;
+ev simgesi kamerayı başlangıçtaki 3B konuma ve parça merkezine döndürür.
+Panel genişliği, bilgi paneli, oynatma hızı, tahmini hızlı hareket hızı, kamera ve takım görünümü tercihleri
+hem F3 önizlemesinde hem bağımsız NC uygulamasında sonraki açılışlar için saklanır.
+Anlık X/Y/Z konumu grafik alanının alt kısmında da gösterilir.
+
+F/S toplu araçları ve seçilen satıra M7/M8/M9 ekleme/kaldırma değişiklikleri önce
+editöre uygular; diske yalnızca kaydetmeyle yazılır. Desteklenmeyen veya belirsiz
+komutlarda işlem durdurulur. Sabit F değeri mm/dk olarak girilir; G94 ve G20/G21
+belirtilmelidir. G97 bulunmayan dosyalarda S değerlerinin dev/dk olduğu yalnızca
+tezgâh ve post ayarları doğrulandıktan sonra onaylanabilir; G97 otomatik eklenmez.
+Soğutma komutlarının gerçek etkisi tezgâh ve bağlantılarına
+bağlıdır; M9'un bir valfi veya havayı kapattığı varsayılmamalıdır.
+
+Önizleme çizgisel G0/G1, G2/G3 yayları, G17/G18/G19 düzlemleri, G20/G21 birimleri
+ve G90/G91 koordinat modlarını destekler. Bilinmeyen başlangıç ve makine referans
+hareketleri çizilmez; makrolar, alt programlar, çevrimler ve takım telafileri
+tam bir CNC kontrol ünitesi gibi yorumlanmaz. Desteklenmeyen işlemler uyarıyla
+belirtilir. Büyük dosyalarda 8 MB okuma ve bir milyon çizgi sınırı vardır.
+Gösterilen sınırlar sadece çizilebilen hareketleri kapsar; tahmini süreye hızlanma,
+beklemeler ve takım değişimleri dahil değildir. Animasyon gerçek ilerleme hızını,
+ofsetleri veya çarpışmaları simüle etmez ve tezgâhta doğrulamanın yerine geçmez.
 
 ---
 
@@ -112,7 +151,7 @@ fman'ın kullanım kolaylığından ilham alır; SwiftUI + AppKit ile sıfırdan
 
 ## Kurulum (DMG)
 
-1. `build/GMS_Commander_v1.0.0_mac_arm64.dmg` dosyasını açın.
+1. `build/GMS_Commander_v1.0.1_mac_arm64.dmg` dosyasını açın.
 2. "GMS Commander" uygulamasını `Applications` klasörüne sürükleyin.
 3. İlk açılışta Gatekeeper uyarısı görürseniz: **Sistem Ayarları → Gizlilik ve Güvenlik → "Yine de Aç"**.
    (Uygulama ad-hoc imzalıdır; noter onayı yapılmamıştır.)
@@ -130,7 +169,7 @@ değişkenlerini (`$(PRODUCT_NAME)` vb.) doldurur, `tr.lproj` dizinini ve `AppIc
 kopyalar, ardından ad-hoc imza atar.
 
 ```bash
-./Scripts/create_dmg.sh     # build/GMS_Commander_v1.0.0_mac_arm64.dmg üretir + doğrular
+./Scripts/create_dmg.sh     # build/GMS_Commander_v1.0.1_mac_arm64.dmg üretir + doğrular
 ./Scripts/clean.sh          # build/, DerivedData/, .DS_Store artıklarını siler
 ```
 

@@ -7,7 +7,7 @@
 # `xcodebuild -project GMS_Commander.xcodeproj -scheme GMS_Commander` tercih edilir.
 #
 # Kullanım:
-#   ./Scripts/build.sh            # Derle ve build/GMS Commander.app üret
+#   ./Scripts/build.sh            # Commander ve bağımsız NC uygulamasını üret
 #   ./Scripts/build.sh --clean    # Önce temizle, sonra derle
 #
 
@@ -18,7 +18,7 @@ cd "$ROOT_DIR"
 
 APP_NAME="GMS Commander"
 BUNDLE_ID="com.gms.commander"
-VERSION="1.0.0"
+VERSION="1.0.1"
 BUILD_DIR="$ROOT_DIR/build"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
@@ -124,3 +124,37 @@ codesign -dv "$APP_BUNDLE" 2>&1 | sed -n '1,3p' || true
 echo "    Boyut: $(du -sh "$APP_BUNDLE" | cut -f1)"
 echo
 echo "Çalıştırmak için:  open \"$APP_BUNDLE\""
+
+NC_NAME="GMS NC Preview"
+NC_BUNDLE="$BUILD_DIR/$NC_NAME.app"
+NC_CONTENTS="$NC_BUNDLE/Contents"
+echo "==> $NC_NAME $VERSION derleniyor"
+rm -rf "$NC_BUNDLE"
+mkdir -p "$NC_CONTENTS/MacOS" "$NC_CONTENTS/Resources"
+"$SWIFTC" \
+    -target "arm64-apple-macos$DEPLOYMENT_TARGET" \
+    -sdk "$SDK_PATH" \
+    -swift-version 5 \
+    -D NC_STANDALONE \
+    -O \
+    -whole-module-optimization \
+    -o "$NC_CONTENTS/MacOS/$NC_NAME" \
+    "${SOURCES[@]}"
+
+NC_PLIST="$NC_CONTENTS/Info.plist"
+cp "$SOURCE_DIR/Resources/Info.plist" "$NC_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $NC_NAME" "$NC_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName $NC_NAME" "$NC_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $NC_NAME" "$NC_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.gms.ncpreview" "$NC_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$NC_PLIST"
+/usr/libexec/PlistBuddy -c "Copy :UTExportedTypeDeclarations :UTImportedTypeDeclarations" "$NC_PLIST"
+/usr/libexec/PlistBuddy -c "Delete :UTExportedTypeDeclarations" "$NC_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon.icns" "$NC_PLIST"
+printf 'APPL????' > "$NC_CONTENTS/PkgInfo"
+cp -R "$SOURCE_DIR/Resources/tr.lproj" "$NC_CONTENTS/Resources/"
+cp "$RESOURCES_DIR/AppIcon.icns" "$NC_CONTENTS/Resources/"
+codesign --force --sign - --timestamp=none "$NC_BUNDLE" >/dev/null 2>&1 || {
+    echo "Uyarı: NC uygulaması imzalanamadı." >&2
+}
+echo "==> Paket hazır: $NC_BUNDLE"

@@ -10,6 +10,10 @@
 //
 
 import Foundation
+import AppKit
+import SceneKit
+import SwiftUI
+import Metal
 
 // MARK: - Küçük test çatısı
 
@@ -2361,6 +2365,345 @@ func testTerminalTarget() {
     expect(TerminalService.isAvailable, "Sistem Terminali kurulu")
 }
 
+func testNCParser() {
+    group("NC önizleme: hareket ayrıştırma")
+    let modal = NCParser.parse("""
+    G21 G90 G0 X0 Y0 Z0
+    G1 X10
+    Y5
+    G91 X-2 Z1
+    G20 G90 X1 Y0 Z0
+    """)
+    expectEqual(modal.segments.count, 4, "Modal hareketler ayrıştırılıyor")
+    if modal.segments.count == 4 {
+        expectEqual(modal.segments[1].end, NCPoint(x: 10, y: 5, z: 0), "Modal eksen korunuyor")
+        expectEqual(modal.segments[2].end, NCPoint(x: 8, y: 5, z: 1), "Artımlı koordinatlar hesaplanıyor")
+        expectEqual(modal.segments[3].end, NCPoint(x: 25.4, y: 0, z: 0), "İnç koordinatlar milimetreye çevriliyor")
+    }
+    let arcs = NCParser.parse("""
+    G90 G0 X1 Y0 Z0
+    G17 G3 X0 Y1 I-1 J0
+    G18 G3 X-1 Z1 K1
+    """)
+    expect(!arcs.warnings.contains(.invalidArc) && arcs.segments.count > 2,
+           "G17 ve G18 yayları çiziliyor")
+    expectEqual(arcs.segments.last?.end, NCPoint(x: -1, y: 1, z: 1), "Yay doğru noktada bitiyor")
+    let gaps = NCParser.parse("""
+    G90 G0 X0 Y0 Z5
+    G28 G91 Z0
+    G90 G0 X10 Y10
+    Z15
+    G1 Z0
+    G81 X20 Y20 Z-1
+    X30
+    G80
+    G0 X1 Y2 Z3
+    G1 X2
+    """)
+    expectEqual(gaps.segments.count, 2, "Referans ve desteklenmeyen hareketler çizilmiyor")
+    if gaps.segments.count == 2 {
+        expectEqual(gaps.segments[0].start, NCPoint(x: 10, y: 10, z: 15), "Referans sonrası bilinmeyen yol atlanıyor")
+        expectEqual(gaps.segments[1].start, NCPoint(x: 1, y: 2, z: 3), "Desteklenmeyen çevrim sonrası yol yeniden başlıyor")
+    }
+    expect(!gaps.warnings.isEmpty, "Desteklenmeyen hareketler için uyarı gösteriliyor")
+    let crlf = NCParser.parse("G0 X0 Y0 Z0\r\nG1 X1\r\nX2\r\n")
+    expectEqual(crlf.segments.map(\.line), [1, 2], "CRLF satır numaraları korunuyor")
+    let compensation = NCParser.parse("""
+    G0 X0 Y0 Z0
+    G41 G1 X1
+    X2
+    G40 G0 X3 Y0 Z0
+    G2 X10 Y0 R1
+    G1 X11
+    """)
+    expect(compensation.warnings.contains(.compensation), "Takım telafisi uyarılıyor")
+    expect(compensation.warnings.contains(.invalidArc), "Geçersiz yay uyarılıyor")
+    expectEqual(compensation.segments.count, 0, "Telafili ve geçersiz yay sonrası belirsiz hareket çizilmiyor")
+    let home = NCParser.parse("G0 X0 Y0 Z0\nG28\nG0 X1\nG1 X2")
+    expect(home.segments.isEmpty && home.warnings.contains(.reference), "Eksensiz referans hareketinden sonra konum bilinmiyor")
+    expect(NCFile.supports(URL(fileURLWithPath: "/tmp/example.NC")), "NC uzantısı büyük harfle tanınıyor")
+    expect(NCFile.supports(URL(fileURLWithPath: "/tmp/example.gcode")), "G-code uzantısı tanınıyor")
+    expect(!NCFile.supports(URL(fileURLWithPath: "/tmp/example.txt")), "Diğer metin dosyaları NC sayılmıyor")
+
+    let states = NCParser.parse("G21 G94 G0 X0 Y0 Z0\nG1 X1 F100 S12000 M8\n(comment)\nG28 Z0")
+    expectEqual(states.lines[1].position, NCPoint(x: 1, y: 0, z: 0), "Satır konumu tutuluyor")
+    expectEqual(states.lines[2].segmentCount, 1, "Hareketsiz satır önceki ilerlemeyi koruyor")
+    expectEqual(states.lines[1].feed, 100, "Bilinen G94 ilerlemesi gösteriliyor")
+    expect(states.lines[3].position == nil, "Referans sonrası konum bilinmiyor")
+    let unknownFeed = NCParser.parse("G21 G0 X0 Y0 Z0\nG1 X1 F100\nG95 F2 X2")
+    expect(unknownFeed.lines[1].feed == nil && unknownFeed.lines[2].feed == nil, "Belirsiz ilerleme modu hız olarak gösterilmiyor")
+}
+
+func testNCCodeTools() {
+    group("NC düzenleme araçları")
+    let text = "G21 G94 G97\r\nG1 X1 F100 S1000 (F77 S88)\r\nG20 F2 ; F9\r\nM30\r\n"
+    do {
+        let feed = try NCCodeTools.change(text, .feed(254))
+        expectEqual(feed, "G21 G94 G97\r\nG1 X1 F254 S1000 (F77 S88)\r\nG20 F10 ; F9\r\nM30\r\n", "Sabit ilerleme birimleri, yorumlar ve CRLF korunuyor")
+        let percent = try NCCodeTools.change(text, .feedPercent(10))
+        expect(percent.contains("F110 S1000 (F77 S88)") && percent.contains("G20 F2.2 ; F9"), "Yüzde değişimi yorumları etkilemiyor")
+        let spindle = try NCCodeTools.change(text, .spindle(5000))
+        expect(spindle.contains("S5000 (F77 S88)"), "Devir değerleri değişiyor, yorumlar korunuyor")
+        let inserted = try NCCodeTools.changeCoolant(text, line: 1, code: 8, insert: true)
+        expect(inserted.contains("S88)\r\nM8\r\nG20"), "Komut seçili satırdan sonra CRLF ile ekleniyor")
+        let removed = try NCCodeTools.changeCoolant("G21 M8 (M8)\r\nM30\r\n", line: 0, code: 8, insert: false)
+        expectEqual(removed, "G21  (M8)\r\nM30\r\n", "Komut silinirken yorum korunuyor")
+        let last = try NCCodeTools.changeCoolant("G21\r\nG1 X1", line: 1, code: 7, insert: true)
+        expectEqual(last, "G21\r\nG1 X1\r\nM7", "Son satırdan sonra CRLF korunuyor")
+    } catch { expect(false, "NC araçları beklenmedik hata: \(error)") }
+    for bad in ["G21 G94 F100\nG95 F2", "G21 G94 F100\nG81 X1", "G21 G94 F100\nM98 P10", "G21 G94 F100\nX#1", "G21 G94 F100\nG1 Z"] {
+        expectThrows("Desteklenmeyen veya belirsiz kodda toplu değişim duruyor") {
+            _ = try NCCodeTools.change(bad, .feed(200))
+        }
+    }
+    expectThrows("Bilinmeyen ilerleme modu engelleniyor") { _ = try NCCodeTools.change("G21 F100", .feed(200)) }
+    expectThrows("Bilinmeyen devir modu engelleniyor") { _ = try NCCodeTools.change("M3 S1000", .spindle(2000)) }
+    do {
+        let changed = try NCCodeTools.change("N20 S5000 M03\nM30\n", .spindle(5500), assumeSpindleRPM: true)
+        expectEqual(changed, "N20 S5500 M03\nM30\n", "Onaylanan G97'siz devir değişiminde diğer kodlar korunuyor")
+    } catch { expect(false, "Onaylanan devir değişimi başarısız: \(error)") }
+    expectThrows("Onay G96 gibi desteklenmeyen modları geçersiz kılamaz") {
+        _ = try NCCodeTools.change("G96 S5000", .spindle(5500), assumeSpindleRPM: true)
+    }
+    expectThrows("Bilinmeyen birim ile sabit ilerleme engelleniyor") { _ = try NCCodeTools.change("G94 F100", .feed(200)) }
+    expectThrows("Program sonuna komut eklenmiyor") { _ = try NCCodeTools.changeCoolant("G21\nM30\n%", line: 1, code: 8, insert: true) }
+}
+
+@MainActor
+func testNCScene() {
+    group("NC sahne ve kamera")
+    let c = NCSceneView.Coordinator()
+    let vertices = (0..<6).map { SCNVector3(Float($0), 0, 0) }
+    let path = NCSceneView.Coordinator.Paths(
+        indices: [1, 3, 5], source: SCNGeometrySource(vertices: vertices),
+        normalMaterial: SCNMaterial(), processedMaterial: SCNMaterial()
+    )
+    func geometryIndices(_ node: SCNNode) -> [UInt32] {
+        guard !node.isHidden, let element = node.geometry?.elements.first else { return [] }
+        return element.data.withUnsafeBytes { Array($0.bindMemory(to: UInt32.self)) }
+    }
+    path.update(completed: c.completedCount(in: path.indices, progress: 0), mode: .highlighted)
+    expectEqual(geometryIndices(path.normal), [0, 1, 2, 3, 4, 5], "Başlangıçta tüm normal çizgiler gösteriliyor")
+    expect(path.processed.isHidden, "Başlangıçta işlenmiş geometri gizli")
+    path.update(completed: c.completedCount(in: path.indices, progress: 4), mode: .highlighted)
+    expectEqual(geometryIndices(path.processed), [0, 1, 2, 3], "Geçilen çizgilerin doğru indeksleri renklendiriliyor")
+    expectEqual(geometryIndices(path.normal), [4, 5], "Kalan çizgi doğru indekslerle çiziliyor")
+    path.update(completed: c.completedCount(in: path.indices, progress: 6), mode: .highlighted)
+    expect(path.normal.isHidden, "Bitişte boş kalan geometri gizli")
+    expectEqual(geometryIndices(path.processed), [0, 1, 2, 3, 4, 5], "Bitişte tüm çizgiler bozulmadan renklendiriliyor")
+    path.update(completed: 3, mode: .remaining)
+    expect(path.normal.isHidden && path.processed.isHidden, "Bitişte işlenenleri gizle boş yol gösteriyor")
+    path.update(completed: 0, mode: .standard)
+    expectEqual(geometryIndices(path.normal), [0, 1, 2, 3, 4, 5], "Standart moda dönüşte tüm yol korunuyor")
+    c.camera = SCNNode()
+    c.camera?.camera = SCNCamera()
+    c.camera?.position = SCNVector3(0, -20, 10)
+    c.target = SCNNode()
+    let initial = c.camera!.simdPosition
+    c.zoom(by: 1)
+    expect(simd_length(c.camera!.simdPosition) < simd_length(initial), "Tekerlek yakınlaştırması kamerayı hedefe yaklaştırıyor")
+    let targetBefore = c.target!.simdPosition
+    c.drag(dx: 20, dy: 10, pan: true, height: 500)
+    expect(c.target!.simdPosition != targetBefore, "Kaydırma kamera hedefini değiştiriyor")
+    let afterPan = c.camera!.simdPosition
+    c.drag(dx: 20, dy: 10, pan: false, height: 500)
+    expect(c.camera!.simdPosition != afterPan, "Döndürme kamera konumunu değiştiriyor")
+    c.target!.simdPosition = .zero
+    c.camera!.simdPosition = SIMD3<Float>(0, 0, 20)
+    c.drag(dx: 0, dy: 1, pan: false, height: 500)
+    expect(c.camera!.simdPosition.x != 0 || c.camera!.simdPosition.y != 0, "Üst görünüm küçük fare hareketiyle döndürülebiliyor")
+
+    _ = NSApplication.shared
+    let view = SCNView()
+    let scene = SCNScene()
+    scene.rootNode.addChildNode(c.camera!)
+    scene.rootNode.addChildNode(c.target!)
+    guard let device = MTLCreateSystemDefaultDevice() else {
+        expect(false, "Kamera projeksiyon testi için Metal aygıtı gerekli")
+        return
+    }
+    let renderer = SCNRenderer(device: device, options: nil)
+    renderer.scene = scene
+    renderer.pointOfView = c.camera
+    c.target!.simdPosition = SIMD3<Float>(3, 4, 5)
+    c.camera!.simdPosition = SIMD3<Float>(12, -9, 17)
+    c.drag(dx: 80, dy: 25, pan: false, height: 500)
+    for (action, expectedOffset, expectedUp) in [
+        (NCCameraAction.front, SIMD3<Float>(0, -25, 0), SIMD3<Float>(0, 0, 1)),
+        (.top, SIMD3<Float>(0, 0, 25), SIMD3<Float>(0, 1, 0)),
+        (.right, SIMD3<Float>(25, 0, 0), SIMD3<Float>(0, 0, 1))
+    ] {
+        NCSceneView.apply(action, view: view, coordinator: c)
+        let look = c.camera!.constraints?.first as? SCNLookAtConstraint
+        expect(c.camera!.simdPosition - c.target!.simdPosition == expectedOffset &&
+               look?.worldUp.x == CGFloat(expectedUp.x) &&
+               look?.worldUp.y == CGFloat(expectedUp.y) &&
+               look?.worldUp.z == CGFloat(expectedUp.z) && look?.isGimbalLockEnabled == true,
+               "Döndürmeden sonra \(action) görünümü dünya eksenlerine sabitleniyor")
+        SCNTransaction.flush()
+        _ = renderer.snapshot(atTime: 0, with: CGSize(width: 128, height: 128), antialiasingMode: .none)
+        let worldToCamera = simd_inverse(c.camera!.presentation.simdWorldTransform)
+        let horizontalAxis: SIMD4<Float> = action == .right ? SIMD4(0, 1, 0, 0) : SIMD4(1, 0, 0, 0)
+        let verticalAxis: SIMD4<Float> = action == .top ? SIMD4(0, 1, 0, 0) : SIMD4(0, 0, 1, 0)
+        let horizontal = worldToCamera * horizontalAxis
+        let vertical = worldToCamera * verticalAxis
+        expect(abs(horizontal.y) < 0.001 && horizontal.x > 0.99 &&
+               abs(vertical.x) < 0.001 && vertical.y > 0.99,
+               "\(action) görünümünde yatay ve dikey eksenler ekrana hizalanıyor")
+        c.drag(dx: 30, dy: 15, pan: false, height: 500)
+    }
+    NCSceneView.apply(.top, view: view, coordinator: c)
+    NCSceneView.apply(.zoomIn, view: view, coordinator: c)
+    let topLook = c.camera!.constraints?.first as? SCNLookAtConstraint
+    expect(topLook?.worldUp.y == 1 && topLook?.isGimbalLockEnabled == true,
+           "Üst görünümde yakınlaştırma kamera yönünü koruyor")
+    NCSceneView.apply(.home, view: view, coordinator: c)
+    let homeLook = c.camera!.constraints?.first as? SCNLookAtConstraint
+    expect(c.target!.simdPosition == .zero &&
+           c.camera!.simdPosition == SIMD3<Float>(15, -18, 15) &&
+           c.camera!.camera?.usesOrthographicProjection == false &&
+           homeLook?.isGimbalLockEnabled == true,
+           "Home kaydırmayı ve yönü başlangıç 3B görünümüne sıfırlıyor")
+    let state = c.cameraState!
+    c.camera!.simdPosition = SIMD3<Float>(0, 0, 25)
+    NCSceneView.restore(state, view: view, coordinator: c)
+    expect(c.cameraState == state && (c.camera!.constraints?.first as? SCNLookAtConstraint)?.isGimbalLockEnabled == true,
+           "Kaydedilen kamera geri yüklenirken eksen kilidi korunuyor")
+}
+
+@MainActor
+func testNCPreviewSettings() {
+    group("NC önizleme tercihleri")
+    let suite = "GMSCommanderTests.NCPreview.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suite) else {
+        expect(false, "Test tercih alanı açılamadı")
+        return
+    }
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let first = NCPreviewSettings(defaults: defaults)
+    first.speed = 4
+    first.showingHUD = false
+    first.pathMode = .highlighted
+    first.toolMode = .cutter
+    first.pointSize = 23
+    first.rapidValue = "8000"
+    first.diameter = 6
+    first.splitRatio = 0.4
+    expect(first.setToolColor(Color(.sRGB, red: 0.2, green: 0.4, blue: 0.8, opacity: 0.6)), "Takım rengi kaydediliyor")
+    let camera = NCCameraState(position: [12, -9, 6], target: [1, 2, 3], orthographic: true, orthographicScale: 4)
+    first.camera = camera
+    let frame = NSRect(x: 100, y: 120, width: 1400, height: 900)
+    NCPreviewSettings.saveWindowFrame(frame, defaults: defaults)
+    let destination = freshDirectory("nc-save-destination")
+    NCPreviewSettings.saveLastSaveDirectory(destination, defaults: defaults)
+    let sourceFolder = freshDirectory("nc-save-source")
+
+    guard let reopenedDefaults = UserDefaults(suiteName: suite) else {
+        expect(false, "Test tercih alanı yeniden açılamadı")
+        return
+    }
+    let reopened = NCPreviewSettings(defaults: reopenedDefaults)
+    expectEqual(reopened.speed, 4, "Oynatma hızı geri yükleniyor")
+    expect(!reopened.showingHUD, "Bilgi paneli görünürlüğü geri yükleniyor")
+    expect(reopened.pathMode == .highlighted && reopened.toolMode == .cutter, "Yol ve takım modları geri yükleniyor")
+    expectEqual(reopened.pointSize, 23, "Nokta boyutu geri yükleniyor")
+    expectEqual(reopened.rapidValue, "8000", "Tahmini hızlı hareket hızı geri yükleniyor")
+    expectEqual(reopened.diameter, 6, "Takım çapı geri yükleniyor")
+    expectEqual(reopened.splitRatio, 0.4, "Panel oranı geri yükleniyor")
+    if let color = NSColor(reopened.toolColor).usingColorSpace(.sRGB) {
+        expect(abs(Double(color.blueComponent) - 0.8) < 0.001 && abs(Double(color.alphaComponent) - 0.6) < 0.001,
+               "Takım rengi ve saydamlığı geri yükleniyor")
+    } else {
+        expect(false, "Takım rengi ve saydamlığı geri yükleniyor")
+    }
+    expectEqual(reopened.camera, camera, "Kamera konumu ve görünümü geri yükleniyor")
+    expectEqual(NCPreviewSettings.savedWindowFrame(defaults: reopenedDefaults), frame, "Pencere konumu ve boyutu geri yükleniyor")
+    expectEqual(NCPreviewSettings.saveDirectory(for: sourceFolder.appendingPathComponent("source.nc"), defaults: reopenedDefaults),
+                destination.standardizedFileURL, "Son kayıt klasörü sonraki NC dosyası için hatırlanıyor")
+    let unavailable = freshDirectory("nc-save-unavailable")
+    NCPreviewSettings.saveLastSaveDirectory(unavailable, defaults: reopenedDefaults)
+    try? FileManager.default.removeItem(at: unavailable)
+    let fallback = NCPreviewSettings.saveDirectory(for: sourceFolder.appendingPathComponent("source.nc"), defaults: reopenedDefaults)
+    expectEqual(realPath(fallback).path, realPath(sourceFolder).path, "Kullanılamayan kayıt klasörü yerine kaynak klasörü açılıyor")
+    let scene = NCSceneView.Coordinator(settings: reopened)
+    scene.camera = SCNNode()
+    scene.camera?.camera = SCNCamera()
+    scene.camera?.position = SCNVector3(10, -20, 10)
+    scene.target = SCNNode()
+    scene.zoom(by: 1)
+    expectEqual(NCPreviewSettings(defaults: reopenedDefaults).camera, scene.cameraState,
+                "Fareyle kamera değişikliği sonraki pencere için saklanıyor")
+    NCSceneView.apply(.home, view: SCNView(), coordinator: scene)
+    scene.saveCamera()
+    expectEqual(NCPreviewSettings(defaults: reopenedDefaults).camera, scene.cameraState,
+                "Home görünümü sonraki pencere için saklanıyor")
+
+    _ = NSApplication.shared
+    let split = NCNativeSplitView(settings: reopened)
+    split.isVertical = true
+    split.frame = NSRect(x: 0, y: 0, width: 1100, height: 600)
+    split.addArrangedSubview(NSView())
+    split.addArrangedSubview(NSView())
+    split.adjustSubviews()
+    split.layout()
+    expect(abs(split.subviews[0].frame.width - 440) < 2, "Kayıtlı panel oranı gerçek bölücüye uygulanıyor")
+    split.setPosition(600, ofDividerAt: 0)
+    split.splitViewDidResizeSubviews(Notification(name: NSSplitView.didResizeSubviewsNotification, object: split))
+    expect(abs(NCPreviewSettings(defaults: reopenedDefaults).splitRatio - 600.0 / 1100.0) < 0.01,
+           "Değiştirilen bölücü sonraki pencere için saklanıyor")
+    expectEqual(NCPreviewView.coordinateText(NCPoint(x: 1.25, y: -2, z: 3)), "X 1.250  Y -2.000  Z 3.000", "Koordinat metni tüm konumları gösteriyor")
+    expectEqual(NCPreviewView.coordinateText(nil), L.t("nc.hud.unknown"), "Bilinmeyen konum açıkça gösteriliyor")
+}
+
+@MainActor
+func testNCDocument() async {
+    group("NC belge kaydı")
+    let directory = freshDirectory("nc-document")
+    let examples: [(String, Data)] = [
+        ("utf8.nc", Data([0xef, 0xbb, 0xbf]) + Data("G21\r\nM30\r\n".utf8)),
+        ("utf16le.nc", Data([0xff, 0xfe]) + "G21\r\nM30\r\n".data(using: .utf16LittleEndian)!),
+        ("utf16be.nc", Data([0xfe, 0xff]) + "G21\r\nM30\r\n".data(using: .utf16BigEndian)!)
+    ]
+    for (name, data) in examples {
+        let url = directory.appendingPathComponent(name)
+        do {
+            try data.write(to: url)
+            let document = NCDocument(url: url)
+            await document.load()
+            expectEqual(document.text, "G21\r\nM30\r\n", "\(name) BOM metinden ayrıldı")
+            expect(await document.save(), "\(name) kaydedildi")
+            expectEqual(try Data(contentsOf: url), data, "\(name) BOM ve satır sonları korunuyor")
+            document.cancel()
+        } catch { expect(false, "\(name) belge hatası: \(error)") }
+    }
+    let missing = NCDocument(url: directory.appendingPathComponent("missing.nc"))
+    await missing.load()
+    let saved = await missing.save()
+    expect(!missing.loaded && !saved, "Yüklenmeyen belge kaydedilemez")
+
+    _ = NSApplication.shared
+    let editor = NCTextView()
+    editor.string = "G21\r\nM30\r\n"
+    editor.setSelectedRange(NSRange(location: 3, length: 0))
+    editor.insertNewline(nil)
+    expectEqual(editor.string, "G21\r\n\r\nM30\r\n", "Enter ile CRLF satır sonu korunuyor")
+    editor.insertText("G1 X1\nG1 X2", replacementRange: editor.selectedRange())
+    expect(editor.string.contains("G1 X1\r\nG1 X2"), "Çok satırlı giriş dosyanın satır sonuna uyuyor")
+
+    let changed = writeFile("changed.nc", "G21", in: directory)
+    do {
+        guard let date = try FileManager.default.attributesOfItem(atPath: changed.path)[.modificationDate] as? Date else {
+            expect(false, "Harici değişiklik için dosya tarihi okunamadı")
+            return
+        }
+        try NCDocument.checkUnchanged(changed, expected: date)
+        try FileManager.default.setAttributes([.modificationDate: date.addingTimeInterval(0.25)], ofItemAtPath: changed.path)
+        expectThrows("Yarım saniyeden kısa aralıktaki harici değişiklik algılanıyor") {
+            try NCDocument.checkUnchanged(changed, expected: date)
+        }
+    } catch { expect(false, "Harici değişiklik kontrolü hazırlanamadı: \(error)") }
+}
+
 // MARK: - Çalıştırma
 
 try? FileManager.default.createDirectory(at: workRoot, withIntermediateDirectories: true)
@@ -2379,6 +2722,11 @@ testSearchService()
 testAdvancedSearchService()
 testFileHashService()
 testFileViewerService()
+testNCParser()
+testNCCodeTools()
+testNCScene()
+testNCPreviewSettings()
+await testNCDocument()
 await testFileEditorViewModel()
 await testAdvancedSearchViewModel()
 await testFileHashViewModel()

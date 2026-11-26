@@ -15,15 +15,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 APP_NAME="GMS Commander"
-VERSION="1.0.0"
+VERSION="1.0.1"
 BUILD_DIR="$ROOT_DIR/build"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
+NC_BUNDLE="$BUILD_DIR/GMS NC Preview.app"
 STAGING_DIR="$BUILD_DIR/dmg-staging"
 VOLUME_NAME="$APP_NAME"
 DMG_NAME="GMS_Commander_v${VERSION}_mac_arm64.dmg"
 DMG_PATH="$BUILD_DIR/$DMG_NAME"
 
-if [[ ! -d "$APP_BUNDLE" ]]; then
+if [[ ! -d "$APP_BUNDLE" || ! -d "$NC_BUNDLE" ]]; then
     echo "==> Uygulama paketi bulunamadı, önce derleniyor"
     "$ROOT_DIR/Scripts/build.sh"
 fi
@@ -40,6 +41,7 @@ ln -s /Applications "$STAGING_DIR/Applications"
 # genişletilmiş öznitelikler korunur (cp -R -p yerine ditto kullanılır).
 rm -rf "$STAGING_DIR/$APP_NAME.app"
 ditto "$APP_BUNDLE" "$STAGING_DIR/$APP_NAME.app"
+ditto "$NC_BUNDLE" "$STAGING_DIR/GMS NC Preview.app"
 
 hdiutil create \
     -volname "$VOLUME_NAME" \
@@ -58,4 +60,4 @@ echo
 echo "==> DMG hazır: $DMG_PATH"
 echo "    Boyut: $(du -sh "$DMG_PATH" | cut -f1)"
 echo
-echo "Kurmak için DMG'yi açıp \"$APP_NAME\" uygulamasını Applications klasörüne sürükleyin."
+echo "Kurmak için iki uygulamayı da Applications klasörüne sürükleyin."

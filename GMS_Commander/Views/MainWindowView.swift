@@ -277,7 +277,7 @@ struct MainWindowView: View {
             bindings: settings.keyBindings,
             additionalBindings: settings.additionalKeyBindings
         ) { command in
-            guard !viewModel.isModalPresented else { return false }
+            guard !viewModel.isModalPresented, backButtonRouter.window?.isKeyWindow == true else { return false }
 
             switch command {
             case .bare(let action):

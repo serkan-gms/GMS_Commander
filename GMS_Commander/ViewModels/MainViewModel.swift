@@ -586,6 +586,12 @@ final class MainViewModel: ObservableObject {
             QuickLookCoordinator.shared.show([item.url])
             return
         }
+        if NCFile.supports(item.url) {
+            NCExternalPreview.shared.open(item.url) { [weak self] in
+                self?.refreshAfterEditing()
+            }
+            return
+        }
         viewerFile = FilePresentationRequest(url: item.url)
     }
 

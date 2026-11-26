@@ -4,6 +4,21 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>tr</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>NC ve G-code dosyası</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.gms.commander.gcode</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>GMS Commander</string>
 	<key>CFBundleExecutable</key>
@@ -23,7 +38,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>1.0.1</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSApplicationCategoryType</key>
@@ -40,5 +55,21 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2025 GMS. Tüm hakları saklıdır.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.gms.commander.gcode</string>
+			<key>UTTypeDescription</key>
+			<string>NC ve G-code dosyası</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.plain-text</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>nc</string><string>gcode</string><string>cnc</string></array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>
